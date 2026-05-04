@@ -22,6 +22,219 @@ const CUSTOM_SHAPES_STORE = 'custom_shapes';
 const SCHEMA_VERSION = '1.5.0';
 const PeDom = () => window.DomManager.getInstance();
 
+let activeSection = null;
+
+/**
+ * Sets the active section and updates visual highlights.
+ */
+function setActiveSection(section) {
+    // Remove active class from previous
+    if (activeSection) {
+        activeSection.classList.remove('be-active-section');
+        const prevWrapper = activeSection.closest('.be-section-wrapper');
+        if (prevWrapper) prevWrapper.classList.remove('be-active-wrapper');
+    }
+
+    activeSection = section;
+
+    if (activeSection) {
+        activeSection.classList.add('be-active-section');
+        const wrapper = activeSection.closest('.be-section-wrapper');
+        if (wrapper) wrapper.classList.add('be-active-wrapper');
+    }
+
+    updatePropertiesPanel();
+}
+
+/**
+ * Updates the properties panel content based on the active section.
+ */
+function updatePropertiesPanel(panelElement = null) {
+    const panel = panelElement || document.getElementById('print-enhance-properties-panel');
+    if (!panel) return;
+
+    panel.innerHTML = '';
+
+    if (!activeSection) {
+        const emptyMsg = document.createElement('div');
+        emptyMsg.className = 'be-prop-panel-empty';
+        emptyMsg.textContent = 'Select a section to edit its properties';
+        emptyMsg.style.color = '#888';
+        emptyMsg.style.fontStyle = 'italic';
+        emptyMsg.style.textAlign = 'center';
+        emptyMsg.style.padding = '10px';
+        panel.appendChild(emptyMsg);
+        return;
+    }
+
+    const title = document.createElement('h4');
+    const header = activeSection.querySelector('.print-section-header span');
+    title.textContent = `Editing: ${header ? header.textContent.trim() : 'Section'}`;
+    title.style.margin = '0 0 8px 0';
+    title.style.fontSize = '14px';
+    title.style.color = 'var(--btn-color)';
+    panel.appendChild(title);
+
+    // 1. Font Size Slider
+    const fsContainer = document.createElement('div');
+    fsContainer.className = 'be-prop-control';
+    fsContainer.style.display = 'flex';
+    fsContainer.style.flexDirection = 'column';
+    fsContainer.style.gap = '4px';
+
+    const fsLabel = document.createElement('label');
+    fsLabel.textContent = 'Font Size';
+    fsLabel.style.fontSize = '11px';
+    fsLabel.style.color = '#ccc';
+    fsContainer.appendChild(fsLabel);
+
+    const fsSliderRow = document.createElement('div');
+    fsSliderRow.style.display = 'flex';
+    fsSliderRow.style.alignItems = 'center';
+    fsSliderRow.style.gap = '8px';
+
+    const wrapper = activeSection.closest('.be-section-wrapper') || activeSection;
+    const currentSize = wrapper.style.fontSize || '10px';
+    
+    let numericValue = 10;
+    let unit = 'px';
+    const match = currentSize.match(/^(\d+(?:\.\d+)?)(px|em|rem|%)$/);
+    if (match) {
+        numericValue = parseFloat(match[1]);
+        unit = match[2];
+        
+        // If it was percentage, convert to px base 10 for the slider
+        if (unit === '%') {
+            numericValue = (numericValue / 100) * 10;
+            unit = 'px';
+        }
+    }
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '8';
+    slider.max = '30';
+    slider.value = numericValue.toString();
+    slider.className = 'be-modal-slider';
+    slider.style.flexGrow = '1';
+
+    const valDisplay = document.createElement('span');
+    valDisplay.textContent = `${slider.value}px`;
+    valDisplay.style.minWidth = '40px';
+    valDisplay.style.textAlign = 'right';
+    valDisplay.style.fontSize = '12px';
+
+    slider.oninput = () => {
+        const val = slider.value;
+        valDisplay.textContent = `${val}px`;
+        
+        applyFontSize(wrapper, `${val}px`);
+        updateLayoutBounds();
+    };
+
+    fsSliderRow.appendChild(slider);
+    fsSliderRow.appendChild(valDisplay);
+    fsContainer.appendChild(fsSliderRow);
+    panel.appendChild(fsContainer);
+
+    // 2. Compact Mode Toggle
+    const compactContainer = document.createElement('div');
+    compactContainer.className = 'be-prop-control';
+    compactContainer.style.display = 'flex';
+    compactContainer.style.alignItems = 'center';
+    compactContainer.style.justifyContent = 'space-between';
+    compactContainer.style.padding = '4px 0';
+
+    const compactLabel = document.createElement('label');
+    compactLabel.textContent = 'Compact Mode';
+    compactLabel.style.fontSize = '12px';
+    compactLabel.style.color = '#ccc';
+    compactContainer.appendChild(compactLabel);
+
+    const compactToggle = document.createElement('input');
+    compactToggle.type = 'checkbox';
+    compactToggle.checked = activeSection.classList.contains('be-compact-mode');
+    compactToggle.style.cursor = 'pointer';
+    
+    compactToggle.onchange = () => {
+        activeSection.classList.toggle('be-compact-mode', compactToggle.checked);
+        updateLayoutBounds();
+        
+        // Sync with the section button if visible
+        const btn = activeSection.querySelector('.be-compact-toggle');
+        if (btn) {
+            btn.style.backgroundColor = compactToggle.checked ? 'var(--btn-color)' : 'var(--btn-color-highlight)';
+        }
+    };
+
+    compactContainer.appendChild(compactToggle);
+    panel.appendChild(compactContainer);
+
+    // 3. Border Style Button
+    const borderContainer = document.createElement('div');
+    borderContainer.className = 'be-prop-control';
+    borderContainer.style.display = 'flex';
+    borderContainer.style.alignItems = 'center';
+    borderContainer.style.justifyContent = 'space-between';
+    borderContainer.style.padding = '4px 0';
+
+    const borderLabel = document.createElement('label');
+    borderLabel.textContent = 'Border Style';
+    borderLabel.style.fontSize = '12px';
+    borderLabel.style.color = '#ccc';
+    borderContainer.appendChild(borderLabel);
+
+    const borderBtn = document.createElement('button');
+    borderBtn.className = 'be-prop-border-button';
+    borderBtn.style.width = '60px';
+    borderBtn.style.height = '40px';
+    borderBtn.style.padding = '4px';
+    borderBtn.style.border = '1px solid #444';
+    borderBtn.style.backgroundColor = '#222';
+    borderBtn.style.cursor = 'pointer';
+    borderBtn.style.borderRadius = '4px';
+    borderBtn.style.display = 'flex';
+    borderBtn.style.alignItems = 'center';
+    borderBtn.style.justifyContent = 'center';
+    borderBtn.style.position = 'relative';
+    borderBtn.title = 'Change Border Style';
+
+    const currentBorderStyle = ALL_BORDER_STYLES.find(style => activeSection.classList.contains(style)) || 'default-border';
+
+    const borderPreview = document.createElement('div');
+    borderPreview.className = `be-border-preview ${currentBorderStyle}`;
+    borderPreview.style.width = '100%';
+    borderPreview.style.height = '100%';
+    borderPreview.style.pointerEvents = 'none';
+    borderBtn.appendChild(borderPreview);
+
+    borderBtn.onclick = async () => {
+        const style = ALL_BORDER_STYLES.find(s => activeSection.classList.contains(s)) || 'default-border';
+        const result = await showBorderPickerModal(style);
+
+        if (result) {
+            clearBorderStyles(activeSection);
+            activeSection.classList.add(result.style);
+            
+            // Update preview
+            borderPreview.className = `be-border-preview ${result.style}`;
+            
+            updateLayoutBounds();
+        }
+    };
+
+    borderContainer.appendChild(borderBtn);
+    panel.appendChild(borderContainer);
+}
+
+/**
+ * Returns the currently active section.
+ */
+function getActiveSection() {
+    return activeSection;
+}
+
+
 /**
  * Initializes global hover highlights for the active layer.
  * Uses a single listener and z-index prioritization to prevent flickering on overlaps.
@@ -1701,6 +1914,7 @@ function renderExtractedSection(snapshot) {
     if (snapshot.top) wrapper.style.setProperty('top', snapshot.top, 'important');
     if (snapshot.zIndex) wrapper.style.setProperty('z-index', snapshot.zIndex, 'important');
     if (snapshot.printZIndex) wrapper.dataset.printZ = snapshot.printZIndex;
+    if (snapshot.fontSize) applyFontSize(wrapper, snapshot.fontSize);
 
     if (snapshot.minimized) {
         container.dataset.minimized = 'true';
@@ -2867,6 +3081,17 @@ function enforceFullHeight() {
             object-fit: contain;
         }
         
+        .be-section-wrapper section > h2 + div,
+        .be-section-wrapper section {
+            height: 100%;
+            width: 100%;
+        }
+        
+        .be-section-wrapper section > h2 + div {
+            display: flex;
+            height: 100% !important;
+        }
+        
         /* Layer Lock Interactions */
         .be-layer-locked .be-section-wrapper {
             pointer-events: none !important;
@@ -2887,8 +3112,11 @@ function enforceFullHeight() {
             z-index: 100003 !important;
         }
 
-        .be-delete-layer-btn {
-            color: #ff4444 !important;
+        body.be-lock-shapes #print-enhance-shapes-layer {
+            pointer-events: none !important;
+        }
+
+        .be-delete-layer-btn {            color: #ff4444 !important;
         }
         .be-delete-layer-btn:hover {
             background-color: #552222 !important;
@@ -2912,6 +3140,15 @@ function enforceFullHeight() {
             background-color: #28a74533;
             border-left: 3px solid #28a745;
             margin-left: -3px;
+        }
+
+        .be-active-wrapper {
+            filter: drop-shadow(0 0 10px #c53131) !important;
+            z-index: 100004 !important;
+        }
+
+        .be-active-section {
+            outline: 3px solid #c53131 !important;
         }
         #print-enhance-shapes-layer.be-active-layer,
         #print-enhance-sections-layer.be-active-layer
@@ -2941,6 +3178,12 @@ function enforceFullHeight() {
         }
         .be-section-wrapper:hover .be-section-actions,
         .be-shape-wrapper:hover .be-section-actions {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .be-active-layer .be-section-wrapper:hover .be-section-actions,
+        .be-active-layer .be-shape-wrapper:hover .be-section-actions {
             opacity: 1;
             pointer-events: auto !important;
         }
@@ -2997,15 +3240,17 @@ function enforceFullHeight() {
 
         ${s.UI.PRINT_CONTAINER}, 
         ${s.UI.PRINT_CONTAINER} * {
-            font-size: 10px !important;
+            font-size: calc(10px * var(--be-font-scale, 1)) !important;
             white-space: normal !important;
             overflow-wrap: break-word !important;
         }
+
         ${s.UI.PRINT_CONTAINER} ${s.COMBAT.STATUSES} h2 *,
         ${s.UI.PRINT_CONTAINER} ${s.COMBAT.STATUSES} h2 + *,
         ${s.UI.PRINT_CONTAINER} ${s.CORE.QUICK_INFO} * {
-            font-size: 12px !important;
+            font-size: calc(12px * var(--be-font-scale, 1)) !important;
         }
+
         ${s.UI.PRINT_CONTAINER} ${s.UI.QUICK_INFO_HEALTH} * {
             font-size: 14px !important;
         }
@@ -3262,6 +3507,25 @@ function enforceFullHeight() {
         .be-modal-cancel {
             background: transparent;
             color: #ccc;
+        }
+
+        .be-modal-slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 10px 0;
+        }
+        .be-modal-slider {
+            flex-grow: 1;
+            cursor: pointer;
+            accent-color: var(--btn-color);
+        }
+        .be-modal-slider-value {
+            font-weight: bold;
+            min-width: 50px;
+            text-align: right;
+            font-size: 1.1em;
+            color: white;
         }
 
         /* Border Picker Styles */
@@ -3601,6 +3865,7 @@ function renderClonedSection(snapshot) {
     if (height) container.style.height = height;
     if (zIndex) wrapper.style.zIndex = zIndex;
     if (snapshot.printZIndex) wrapper.dataset.printZ = snapshot.printZIndex;
+    if (snapshot.fontSize) applyFontSize(wrapper, snapshot.fontSize);
 
     if (left && top) {
         wrapper.style.left = left;
@@ -3792,6 +4057,7 @@ function createShape(assetPath, restoreData = null, targetLayerId = null) {
         if (restoreData.top) wrapper.style.setProperty('top', restoreData.top, 'important');
         if (restoreData.zIndex) wrapper.style.setProperty('z-index', restoreData.zIndex, 'important');
         if (restoreData.printZIndex) wrapper.dataset.printZ = restoreData.printZIndex;
+        if (restoreData.fontSize) applyFontSize(wrapper, restoreData.fontSize);
     } else {
         wrapper.style.setProperty('left', '50px', 'important');
         wrapper.style.setProperty('top', '160px', 'important');
@@ -4158,6 +4424,7 @@ function applyGlobalFilters(filters) {
         if (restoreData.height) container.style.setProperty('height', restoreData.height, 'important');
         if (restoreData.zIndex) wrapper.style.setProperty('z-index', restoreData.zIndex, 'important');
         if (restoreData.printZIndex) wrapper.dataset.printZ = restoreData.printZIndex;
+        if (restoreData.fontSize) applyFontSize(wrapper, restoreData.fontSize);
         
         if (restoreData.minimized) {
             container.dataset.minimized = 'true';
@@ -4406,6 +4673,92 @@ function showInputModal(title, message, defaultValue = '') {
             if (e.key === 'Enter') okBtn.click();
             if (e.key === 'Escape') cancelBtn.click();
         };
+    });
+}
+
+/**
+ * Shows a modal with a slider input.
+ * @returns {Promise<number|null>}
+ */
+function showSliderModal(title, message, min, max, defaultValue, unit = '%', onLiveUpdate = null) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'be-modal-overlay';
+        
+        const modal = document.createElement('div');
+        modal.className = 'be-modal';
+        
+        const h3 = document.createElement('h3');
+        h3.textContent = title;
+        modal.appendChild(h3);
+        
+        const p = document.createElement('p');
+        p.textContent = message;
+        modal.appendChild(p);
+        
+        const sliderContainer = document.createElement('div');
+        sliderContainer.className = 'be-modal-slider-container';
+        
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'be-modal-slider';
+        slider.min = min;
+        slider.max = max;
+        slider.value = defaultValue;
+        
+        const valueDisplay = document.createElement('span');
+        valueDisplay.className = 'be-modal-slider-value';
+        valueDisplay.textContent = `${slider.value}${unit}`;
+        
+        slider.oninput = () => {
+            valueDisplay.textContent = `${slider.value}${unit}`;
+            if (onLiveUpdate) onLiveUpdate(slider.value);
+        };
+        
+        sliderContainer.appendChild(slider);
+        sliderContainer.appendChild(valueDisplay);
+        modal.appendChild(sliderContainer);
+        
+        const actions = document.createElement('div');
+        actions.className = 'be-modal-actions';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'be-modal-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => {
+            overlay.remove();
+            resolve(null);
+        };
+        actions.appendChild(cancelBtn);
+        
+        const okBtn = document.createElement('button');
+        okBtn.className = 'be-modal-ok';
+        okBtn.textContent = 'Apply';
+        okBtn.onclick = () => {
+            const val = slider.value;
+            overlay.remove();
+            resolve(val);
+        };
+        actions.appendChild(okBtn);
+        
+        modal.appendChild(actions);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        
+        slider.focus();
+        
+        // Handle Enter/Esc
+        const keyHandler = (e) => {
+            if (e.key === 'Enter') {
+                okBtn.click();
+                window.removeEventListener('keydown', keyHandler);
+            }
+            if (e.key === 'Escape') {
+                cancelBtn.click();
+                window.removeEventListener('keydown', keyHandler);
+            }
+        };
+        window.addEventListener('keydown', keyHandler);
     });
 }
 
@@ -5261,8 +5614,22 @@ function createControls() {
         container.appendChild(btn);
     });
 
+    // Properties Panel Container
+    const propertiesPanel = document.createElement('div');
+    propertiesPanel.id = 'print-enhance-properties-panel';
+    propertiesPanel.style.display = 'flex';
+    propertiesPanel.style.flexDirection = 'column';
+    propertiesPanel.style.gap = '8px';
+    propertiesPanel.style.padding = '8px';
+    propertiesPanel.style.borderTop = '1px solid #444';
+    propertiesPanel.style.marginTop = '4px';
+    propertiesPanel.style.backgroundColor = '#1a1a1a';
+    propertiesPanel.style.borderRadius = '4px';
+    container.appendChild(propertiesPanel);
+
     // Filters Container
     const filtersContainer = document.createElement('div');
+    filtersContainer.className = 'be-filters-container';
     filtersContainer.style.display = 'flex';
     filtersContainer.style.flexDirection = 'column';
     filtersContainer.style.gap = '4px';
@@ -5598,6 +5965,8 @@ function createControls() {
     });
     
     filtersContainer.appendChild(resetAllBtn);
+
+    updatePropertiesPanel(propertiesPanel);
 
     // Load initial values
     if (window.Storage && typeof window.Storage.getFilters === 'function') {
@@ -6300,6 +6669,7 @@ async function scanLayout() {
                 height: section.style.height,
                 zIndex: wrapper.style.zIndex || '10',
                 printZIndex: wrapper.dataset.printZ || wrapper.style.zIndex || '10',
+                fontSize: wrapper.style.fontSize,
                 minimized: section.dataset.minimized === 'true',
                 compact: section.classList.contains('be-compact-mode'),
                 borderStyle: getBorderStyle(section)
@@ -6317,6 +6687,7 @@ async function scanLayout() {
                 height: section.style.height,
                 zIndex: wrapper.style.zIndex || '10',
                 printZIndex: wrapper.dataset.printZ || wrapper.style.zIndex || '10',
+                fontSize: wrapper.style.fontSize,
                 minimized: section.dataset.minimized === 'true',
                 borderStyle: getBorderStyle(section)
             });
@@ -6334,6 +6705,7 @@ async function scanLayout() {
                 zIndex: wrapper.style.zIndex || '110',
                 printZIndex: wrapper.dataset.printZ || wrapper.style.zIndex || '110',
                 rotation: wrapper.dataset.rotation || '0',
+                fontSize: wrapper.style.fontSize,
                 minimized: section.dataset.minimized === 'true'
             });
             return;
@@ -6354,6 +6726,7 @@ async function scanLayout() {
                 height: section.style.height,
                 zIndex: wrapper.style.zIndex || '10',
                 printZIndex: wrapper.dataset.printZ || wrapper.style.zIndex || '10',
+                fontSize: wrapper.style.fontSize,
                 minimized: section.dataset.minimized === 'true',
                 compact: section.classList.contains('be-compact-mode'),
                 borderStyle: getBorderStyle(section)
@@ -6378,6 +6751,7 @@ async function scanLayout() {
             height: section.style.height,
             zIndex: wrapper.style.zIndex || '10',
             printZIndex: wrapper.dataset.printZ || wrapper.style.zIndex || '10',
+            fontSize: wrapper.style.fontSize,
             minimized: section.dataset.minimized === 'true',
             compact: section.classList.contains('be-compact-mode'),
             borderStyle: getBorderStyle(section),
@@ -6713,6 +7087,7 @@ async function applyLayout(layout) {
         if (styles.height) section.style.height = styles.height;
         if (styles.zIndex) wrapper.style.zIndex = styles.zIndex;
         if (styles.printZIndex) wrapper.dataset.printZ = styles.printZIndex;
+        if (styles.fontSize) applyFontSize(wrapper, styles.fontSize);
 
         // Ensure container doesn't have duplicate positioning
         section.style.left = '';
@@ -6964,6 +7339,12 @@ function injectCloneButtons(context = document) {
             actionContainer.appendChild(btn);
         };
 
+        // 0. Select Section Button
+        addRobustButton('be-select-section-button', '🎯', 'Select Section for Editing', (e) => {
+            setActiveSection(section);
+            showFeedback('Section selected for editing');
+        });
+
         // 1. Clone Button
         addRobustButton('be-clone-button', '📋', 'Clone Section', async (e) => {
             const id = section.id || 'unknown';
@@ -7039,6 +7420,29 @@ function injectCloneButtons(context = document) {
         }
     });
 }
+/**
+ * Applies font size and proportional scale variable to a section wrapper.
+ */
+function applyFontSize(wrapper, sizeStr) {
+    if (!wrapper || !sizeStr) return;
+    
+    wrapper.style.setProperty('font-size', sizeStr, 'important');
+    
+    // Extract scale relative to 10px base
+    let numericValue = 10;
+    const match = sizeStr.match(/^(\d+(?:\.\d+)?)(px|em|rem|%)$/);
+    if (match) {
+        numericValue = parseFloat(match[1]);
+        const unit = match[2];
+        if (unit === '%') numericValue = (numericValue / 100) * 10;
+        // em/rem are tricky without root context, but we'll assume they are relative to 16px
+        if (unit === 'em' || unit === 'rem') numericValue = numericValue * 16;
+        
+        const scale = numericValue / 10;
+        wrapper.style.setProperty('--be-font-scale', scale.toString(), 'important');
+    }
+}
+
 /**
  * Injects CSS for Compact Mode.
  */
@@ -7300,6 +7704,8 @@ function injectCompactStyles() {
     window.getCharacterId = getCharacterId;
     window.fetchSpellWithCache = fetchSpellWithCache;
     window.getCharacterSpells = getCharacterSpells;
+    window.setActiveSection = setActiveSection;
+    window.getActiveSection = getActiveSection;
 
 // Execution
 (async () => {
