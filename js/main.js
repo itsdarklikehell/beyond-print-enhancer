@@ -343,7 +343,10 @@ function toggleShapesMode(forceState) {
 function refreshLayers() {
     try {
         const lm = PeDom().getLayerManager();
-        if (lm) lm.refreshLayerContents();
+        if (lm) {
+            lm.refreshLayerContents();
+            lm.updatePrintZIndexes(true); // Silently sync Z-index with UI order
+        }
     } catch (e) {
         // Silently fail if UI not ready
     }
@@ -361,7 +364,7 @@ function updatePrintStyles() {
         else document.body.appendChild(style);
     }
 
-    const elements = document.querySelectorAll('.be-section-wrapper[data-print-z]');
+    const elements = document.querySelectorAll('[data-print-z]');
     const disabledLayers = document.querySelectorAll('[data-print-disabled="true"]');
 
     let css = '@media print {\n';
@@ -370,7 +373,14 @@ function updatePrintStyles() {
     css += '  #print-enhance-layer-manager { display: none !important; }\n';
     
     // Force all sections and layer containers to be fully opaque on print (ignores edit-mode/lock opacity)
-    css += '  .be-shape-layer-container, #print-enhance-sections-layer, .be-section-wrapper { opacity: 1 !important; visibility: visible !important; }\n';
+    css += '  .be-shape-layer-container, #print-enhance-sections-layer, .be-section-wrapper, .be-shape-wrapper, .be-layer-locked .be-section-wrapper, .be-layer-locked .be-shape-wrapper { opacity: 1 !important; visibility: visible !important; }\n';
+
+    // Force layer ordering on print: Sections < Shapes
+    css += '  #print-enhance-sections-layer { z-index: 1000 !important; }\n';
+    css += '  .be-shape-layer-container { z-index: 2000 !important; }\n';
+
+    // Selection and Hover Highlights
+    css += '  .be-active-wrapper, .be-hover-highlight, .be-focus-highlight-hover, .be-active-section { filter: none !important; outline: none !important; }\n';
 
     // Hide layers that are explicitly disabled for print
     disabledLayers.forEach(layer => {
@@ -387,7 +397,7 @@ function updatePrintStyles() {
             css += `  #${el.id} { z-index: ${z} !important; }\n`;
         } else {
             // Fallback to data attribute if ID is missing
-            css += `  .be-section-wrapper[data-print-z="${z}"] { z-index: ${z} !important; }\n`;
+            css += `  [data-print-z="${z}"] { z-index: ${z} !important; }\n`;
         }
     });
     css += '}';
@@ -3081,14 +3091,13 @@ function enforceFullHeight() {
             object-fit: contain;
         }
         
-        .be-section-wrapper section > h2 + div,
+        .be-section-wrapper section:not(.ddbc-armor-class-box) > h2 + div,
         .be-section-wrapper section {
             height: 100%;
             width: 100%;
         }
         
-        .be-section-wrapper section > h2 + div {
-            display: flex;
+        .be-section-wrapper section:not(.ddbc-armor-class-box) > h2 + div {
             height: 100% !important;
         }
         
@@ -3632,7 +3641,9 @@ function enforceFullHeight() {
             html body #print-enhance-sections-layer,
             html body #print-enhance-shapes-layer,
             html body.be-lock-sections .be-section-wrapper,
-            html body.be-lock-shapes .be-shape-wrapper {
+            html body.be-lock-shapes .be-shape-wrapper,
+            html body .be-layer-locked .be-section-wrapper,
+            html body .be-layer-locked .be-shape-wrapper {
                 opacity: 1 !important;
                 visibility: visible !important;
                 pointer-events: none !important;
@@ -3642,6 +3653,15 @@ function enforceFullHeight() {
             html body .be-shape-wrapper * {
                 opacity: 1 !important;
                 visibility: visible !important;
+            }
+
+            /* Selection and Hover Highlights */
+            .be-active-wrapper,
+            .be-hover-highlight,
+            .be-focus-highlight-hover,
+            .be-active-section {
+                filter: none !important;
+                outline: none !important;
             }
 
             /* UI Cleanup */

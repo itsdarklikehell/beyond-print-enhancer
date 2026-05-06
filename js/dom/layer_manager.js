@@ -348,7 +348,10 @@ class LayerManager {
         if (!list) return;
 
         list.innerHTML = '';
-        const elements = document.querySelectorAll(`#${layer.layerId} ${selector}`);
+        // The DOM stores elements front-to-back (last element is visually on top).
+        // The UI list displays them top-to-bottom (top element is visually on top).
+        // Therefore, we must reverse the DOM order when generating the UI list.
+        const elements = Array.from(document.querySelectorAll(`#${layer.layerId} ${selector}`)).reverse();
         
         if (elements.length === 0) {
             list.innerHTML = '<span style="color: #666; font-style: italic; font-size: 10px;">Empty</span>';
@@ -433,7 +436,7 @@ class LayerManager {
     /**
      * Updates the printZIndex attribute of all elements based on their order in the layer list.
      */
-    updatePrintZIndexes() {
+    updatePrintZIndexes(silent = false) {
         // We'll iterate layers in reverse order for Z-Index management
         const allLayers = [this.sectionsLayer, ...this.shapeLayers];
         
@@ -443,31 +446,35 @@ class LayerManager {
 
             const items = Array.from(list.querySelectorAll('.be-layer-item-card, .be-layer-item-thumb'));
             const baseZ = (layerIndex * 100) + 10;
+            const totalItems = items.length;
 
-            // Reorder actual DOM elements to match list order
             const layerContainer = document.getElementById(layer.layerId);
             
+            // Assign Z-indexes: Top item in list gets highest Z, Bottom gets lowest Z
             items.forEach((item, index) => {
                 const targetId = item.dataset.targetId;
                 const el = document.getElementById(targetId);
                 if (el) {
-                    // Update Print Z
-                    el.dataset.printZ = (baseZ + index).toString();
-                    
-                    // Reorder in DOM container if it moved between layers
-                    if (layerContainer && el.parentNode !== layerContainer) {
-                        layerContainer.appendChild(el);
-                        this.checkLayerLimit(layer);
-                    } else if (layerContainer) {
-                        // Just append to maintain order within same layer
+                    const zValue = baseZ + (totalItems - 1 - index);
+                    el.dataset.printZ = zValue.toString();
+                }
+            });
+
+            // Reorder actual DOM elements: Bottom item first, Top item last (so Top renders in front)
+            if (layerContainer) {
+                for (let i = totalItems - 1; i >= 0; i--) {
+                    const targetId = items[i].dataset.targetId;
+                    const el = document.getElementById(targetId);
+                    if (el) {
                         layerContainer.appendChild(el);
                     }
                 }
-            });
+                this.checkLayerLimit(layer);
+            }
         });
 
         if (window.updatePrintStyles) window.updatePrintStyles();
-        if (window.showFeedback) window.showFeedback('Layer order updated');
+        if (!silent && window.showFeedback) window.showFeedback('Layer order updated');
     }
 
     /**
