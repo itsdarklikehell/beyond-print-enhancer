@@ -15,9 +15,9 @@ Modernized and restored for D&D Beyond 2026 site changes. This extension helps y
 
 **This project is a work in progress. Feature requests, issue reports and pull requests are welcome.**
 
-## Try the Chrome Extension
-1. v1.3.0: [Install here](https://chromewebstore.google.com/detail/beyond-print-enhancer/obmbfcnlmoegklgdlkcanlkiadhengbc)
-2. v1.3.2: Pending approval.
+## Try the Chrome Extension Directly
+https://chromewebstore.google.com/detail/beyond-print-enhancer/obmbfcnlmoegklgdlkcanlkiadhengbc
+
 
 ## Recent Updates (v1.4.1)
 - **Hue Filter Fix**: Resolved the "Double Hue" bug where borders looked blue/purple instead of green/red due to cumulative filters.
