@@ -1,8 +1,3 @@
-<img width="1522" height="671" alt="image" src="https://github.com/user-attachments/assets/efa2e184-06ba-4777-845d-830c396b2af7" />
-
-
-
-
 https://github.com/user-attachments/assets/1d596af8-59bf-476d-b100-920194e96072
 
 
@@ -18,13 +13,6 @@ Modernized and restored for D&D Beyond 2026 site changes. This extension helps y
 ## Try the Chrome Extension Directly
 https://chromewebstore.google.com/detail/beyond-print-enhancer/obmbfcnlmoegklgdlkcanlkiadhengbc
 
-
-## Recent Updates (v1.4.1)
-- **Hue Filter Fix**: Resolved the "Double Hue" bug where borders looked blue/purple instead of green/red due to cumulative filters.
-- **Shape Transformation (v1.4.0)**: Persistent 15-degree incremental rotation for all decorative shapes with visual handles.
-- **Enhanced Shapes Modal**: New tabbed navigation and tag-based filtering for the asset library.
-- **Improved Drag-and-Drop**: Complete rewrite of the DnD engine with a custom "Manual Ghost" system for better rotation and scaling support.
-- **Quick Switch**: Swap shape assets while perfectly preserving position, size, and rotation.
 
 ## Try it Live (Developer Mode)
 
@@ -53,6 +41,9 @@ To test the extension locally:
 12. **Global Visual Filters**: Adjust Hue, Saturation, Contrast, and Grayscale for all decorative elements while keeping text legible.
 13. **Save & Load**: Persist your custom layouts to browser storage or export them as JSON files to share.
 14. **Layer Management**: Organize your decorative elements into layers with custom print Z-ordering and visibility toggles.
+15. **Hue Color Filter**: Modify the whole sheet colors.
+16. **Shape Rotation**: Persistent 15-degree incremental rotation for all decorative shapes with visual handles.
+17. **Quick Switch**: Swap shape assets while perfectly preserving position, size, and rotation.
 
 ## Instructions for use
 
@@ -75,12 +66,8 @@ To test the extension locally:
 ## Known issues
 
 1. The extension does not work on mobile browser devices nor the D&D Beyond mobile app.
-2. Currently, only red theme is supported.
-3. The extension is not meant to let you edit your character sheet nor throw dices. Only the SPELL section "Manage spells" should be usable.
+2. The extension is not meant to let you edit your character sheet nor throw dices. Only the SPELL section "Manage spells" should be usable.
 4. Spell description sheets can ONLY gather information from the original "known spells" of D&D Beyond. The tool mitigates this by saving previously known spells. However, if a description was never seen before, it will not be available.
-5. Sometimes, when using the "load" button, the inner contents of a section get messed up. It gets fixed when you resize the section again.
-6. When using the "extract" button, contents are extracted from the original D&D Beyond character sheet. This means that if the content was changed you'll have to reload the page to see the changes.
-
 
 ## Legal ##
 Beyond Print Enhancer is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.
