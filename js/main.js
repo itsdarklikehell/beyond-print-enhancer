@@ -23,6 +23,57 @@ Licensed under Blue Oak Model License 1.0.0
   const SCHEMA_VERSION = "1.5.0";
   const PeDom = () => window.DomManager.getInstance();
 
+  /**
+   * Creates a minimalist context menu for secondary actions.
+   */
+  function createContextMenu() {
+    const menu = document.createElement("div");
+    menu.className = "be-context-menu";
+    menu.style.display = "none";
+
+    // Close menu when clicking outside
+    const closeListener = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.style.display = "none";
+        document.removeEventListener("mousedown", closeListener);
+      }
+    };
+
+    // Store listener on element so we can remove it if toggled manually
+    menu._closeListener = closeListener;
+
+    return menu;
+  }
+
+  /**
+   * Toggles the visibility of a context menu.
+   */
+  function toggleContextMenu(menu) {
+    const isVisible = menu.style.display === "block";
+    if (isVisible) {
+      menu.style.display = "none";
+      document.removeEventListener("mousedown", menu._closeListener);
+    } else {
+      menu.style.display = "block";
+      document.addEventListener("mousedown", menu._closeListener);
+    }
+  }
+
+  /**
+   * Creates a 'More Options' trigger button.
+   */
+  function createMenuTrigger() {
+    const btn = document.createElement("button");
+    btn.className = "be-more-options-button";
+    btn.innerHTML = "⋮";
+    btn.title = "More Options";
+    return btn;
+  }
+
+  window.createContextMenu = createContextMenu;
+  window.toggleContextMenu = toggleContextMenu;
+  window.createMenuTrigger = createMenuTrigger;
+
   let activeSection = null;
 
   /**
@@ -248,67 +299,6 @@ Licensed under Blue Oak Model License 1.0.0
    * Initializes global hover highlights for the active layer.
    * Uses a single listener and z-index prioritization to prevent flickering on overlaps.
    */
-  function initHoverHighlights() {
-    const container =
-      document.getElementById("print-layout-wrapper") || document.body;
-
-    container.addEventListener("mousemove", (e) => {
-      const lm = window.PeDom
-        ? window.PeDom().getLayerManager()
-        : window.DomManager
-          ? window.DomManager.getInstance().getLayerManager()
-          : null;
-      if (!lm || !lm.activeLayerId) {
-        document
-          .querySelectorAll(".be-hover-highlight")
-          .forEach((el) => el.classList.remove("be-hover-highlight"));
-        return;
-      }
-
-      // Find all elements at current mouse position
-      const elements = document.elementsFromPoint(e.clientX, e.clientY);
-
-      // Filter for wrappers that belong to the active layer
-      const validWrappers = elements
-        .map((el) => el.closest(".be-section-wrapper"))
-        .filter((wrapper) => {
-          if (!wrapper) return false;
-          const layer = lm.getLayerForElement(wrapper.id);
-          return layer && layer.id === lm.activeLayerId;
-        });
-
-      // Unique set to handle parent/child overlap if any
-      const uniqueWrappers = Array.from(new Set(validWrappers));
-
-      if (uniqueWrappers.length === 0) {
-        document
-          .querySelectorAll(".be-hover-highlight")
-          .forEach((el) => el.classList.remove("be-hover-highlight"));
-        return;
-      }
-
-      // Prioritize by Z-Index
-      const bestWrapper = uniqueWrappers.reduce((prev, current) => {
-        const prevZ = parseInt(window.getComputedStyle(prev).zIndex) || 0;
-        const currentZ = parseInt(window.getComputedStyle(current).zIndex) || 0;
-        return currentZ >= prevZ ? current : prev;
-      });
-
-      // Update classes
-      document.querySelectorAll(".be-hover-highlight").forEach((el) => {
-        if (el !== bestWrapper) el.classList.remove("be-hover-highlight");
-      });
-      bestWrapper.classList.add("be-hover-highlight");
-    });
-
-    // Clear highlights when leaving the container entirely
-    container.addEventListener("mouseleave", () => {
-      document
-        .querySelectorAll(".be-hover-highlight")
-        .forEach((el) => el.classList.remove("be-hover-highlight"));
-    });
-  }
-
   /**
    * Toggles the interaction mode for the shapes layer.
    */
@@ -416,7 +406,7 @@ Licensed under Blue Oak Model License 1.0.0
 
     // Selection and Hover Highlights
     css +=
-      "  .be-active-wrapper, .be-hover-highlight, .be-focus-highlight-hover, .be-active-section { filter: none !important; outline: none !important; }\n";
+      "  .be-active-wrapper, .be-section-wrapper:hover, .be-shape-wrapper:hover, .be-focus-highlight-hover, .be-active-section { filter: none !important; outline: none !important; }\n";
 
     // Hide layers that are explicitly disabled for print
     disabledLayers.forEach((layer) => {
@@ -1353,8 +1343,8 @@ Licensed under Blue Oak Model License 1.0.0
    */
   function navToSection(name) {
     const dom = window.DomManager.getInstance();
-    const tabs = dom.selectors.CORE.TAB_BUTTON
-      ? Array.from(document.querySelectorAll(dom.selectors.CORE.TAB_BUTTON))
+    const tabs = "button[class*=\"tabButton\"]"
+      ? Array.from(document.querySelectorAll("button[class*=\"tabButton\"]"))
       : [];
 
     // Try matching by data-testid first (very reliable)
@@ -1399,7 +1389,6 @@ Licensed under Blue Oak Model License 1.0.0
    */
   function getBaseSelector(el) {
     const dom = window.DomManager.getInstance();
-    const s = dom.selectors.EXTRACTABLE;
     // We match the pattern from DomManager selector strings
     // Assumption: The selector string IS the class selector.
     // We can extract the class name from the selector string (e.g. '[class*="-group"]' -> '-group')
@@ -1417,11 +1406,11 @@ Licensed under Blue Oak Model License 1.0.0
     // The "string" in the code below is the key from DomManager, or we construct the target object using DomManager values.
 
     const targets = [
-      { pattern: /-group$/, selector: s.GROUP },
-      { pattern: /-snippet--class$/, selector: s.SNIPPET_CLASS },
-      { pattern: /^styles_actionsList__/, selector: s.ACTIONS_LIST },
-      { pattern: /^styles_attackTable__/, selector: s.ATTACK_TABLE },
-      { pattern: /__traits$/, selector: s.TRAITS },
+      { pattern: /-group$/, selector: "[class*=\"-group\"]" },
+      { pattern: /-snippet--class$/, selector: "[class*=\"-snippet--class\"]" },
+      { pattern: /^styles_actionsList__/, selector: "[class*=\"styles_actionsList__\"]" },
+      { pattern: /^styles_attackTable__/, selector: "[class*=\"styles_attackTable__\"]" },
+      { pattern: /__traits$/, selector: "[class*=\"__traits\"]" },
     ];
 
     const classes = Array.from(el.classList);
@@ -1515,9 +1504,9 @@ Licensed under Blue Oak Model License 1.0.0
     // Strategy: Identify sections by looking for tab buttons using DomManager
     // We strictly use the defined selectors, no more fallbacks to hardcoded lists.
     let tabs = [];
-    if (dom.selectors.CORE.TAB_BUTTON) {
+    if ("button[class*=\"tabButton\"]") {
       tabs = Array.from(
-        document.querySelectorAll(dom.selectors.CORE.TAB_BUTTON),
+        document.querySelectorAll("button[class*=\"tabButton\"]"),
       );
     }
 
@@ -1550,8 +1539,8 @@ Licensed under Blue Oak Model License 1.0.0
         // Priority: Find the main structural container that holds the styles
         // We use DomManager selectors
         const selectors = [
-          dom.selectors.CORE.PRIMARY_BOX_WRAPPER,
-          dom.selectors.UI.PRIMARY_BOX,
+          "[class*=\"styles_primaryBox\"]",
+          ".ct-primary-box",
           // Removed specific fallbacks as per user request to have NO CSS strings in main.js
         ];
 
@@ -1634,11 +1623,11 @@ Licensed under Blue Oak Model License 1.0.0
           // RE-ENABLED: Fix Background SVGs to stretch for non-border backgrounds
           const bgSvgs = clone.querySelectorAll(
             [
-              dom.selectors.UI.PRIMARY_BOX + " > " + dom.selectors.SVG.ALL,
-              dom.selectors.SVG.REP_BOX,
-              dom.selectors.SVG.BOX_BACKGROUND +
+              ".ct-primary-box" + " > " + "svg",
+              "svg.ddbc-rep-box-background__svg",
+              ".ddbc-box-background" +
                 ':not([style*="display: none"]) ' +
-                dom.selectors.SVG.ALL,
+                "svg",
             ].join(", "),
           );
 
@@ -1653,10 +1642,10 @@ Licensed under Blue Oak Model License 1.0.0
           // Explicitly fix Group Boxes (Proficiency, Skills, Senses, Saving Throws)
           const groupBoxSvgs = clone.querySelectorAll(
             [
-              dom.selectors.SVG.PROFICIENCY,
-              dom.selectors.SVG.SENSES,
-              dom.selectors.SVG.SKILLS,
-              dom.selectors.SVG.SAVING_THROWS,
+              ".ct-proficiency-groups-box svg",
+              ".ct-senses-box svg",
+              ".ct-skills-box svg",
+              ".ct-saving-throws-box svg",
             ].join(", "),
           );
           groupBoxSvgs.forEach((svg) => {
@@ -1722,7 +1711,7 @@ Licensed under Blue Oak Model License 1.0.0
     if (!tidbitBody) return;
 
     const dom = window.DomManager.getInstance();
-    const nameEl = document.querySelector(dom.selectors.CORE.TIDBITS_NAME);
+    const nameEl = document.querySelector(".ddbc-character-tidbits__heading h1");
     const characterName = nameEl ? nameEl.textContent.trim() : "";
 
     // Create the content for the new section
@@ -1764,15 +1753,13 @@ Licensed under Blue Oak Model License 1.0.0
     if (!container) return;
 
     const dom = window.DomManager.getInstance();
-    const s = dom.selectors.SVG;
-
     // 1. Remove first .ddbc-box-background
-    const firstBg = container.querySelector(s.BOX_BACKGROUND);
+    const firstBg = container.querySelector(".ddbc-box-background");
     if (firstBg) {
       // User Request: Don't hide the background if it belongs to Armor Class or Initiative
       const isProtected =
-        firstBg.querySelector(s.ARMOR_CLASS + ", " + s.INITIATIVE) ||
-        firstBg.closest(s.ARMOR_CLASS_BOX + ", " + s.INITIATIVE_BOX);
+        firstBg.querySelector(".ddbc-armor-class-box-svg" + ", " + ".ddbc-initiative-box-svg") ||
+        firstBg.closest(".ddbc-armor-class-box" + ", " + ".ddbc-initiative-box");
 
       if (!isProtected) {
         firstBg.style.display = "none";
@@ -1781,10 +1768,10 @@ Licensed under Blue Oak Model License 1.0.0
 
     // 2. Remove all section > div > svg
     // Check nested instances
-    container.querySelectorAll(s.GENERIC_SECTION).forEach((svg) => {
+    container.querySelectorAll("section > div > svg").forEach((svg) => {
       if (
-        !svg.classList.contains(s.ARMOR_CLASS.replace(".", "")) &&
-        !svg.classList.contains(s.INITIATIVE.replace(".", ""))
+        !svg.classList.contains(".ddbc-armor-class-box-svg".replace(".", "")) &&
+        !svg.classList.contains(".ddbc-initiative-box-svg".replace(".", ""))
       ) {
         svg.style.display = "none";
       }
@@ -1792,10 +1779,10 @@ Licensed under Blue Oak Model License 1.0.0
 
     // Check if container itself matches section > div > svg pattern (e.g. if container is section)
     if (container.tagName === "SECTION") {
-      container.querySelectorAll(":scope > div > " + s.ALL).forEach((svg) => {
+      container.querySelectorAll(":scope > div > " + "svg").forEach((svg) => {
         if (
-          !svg.classList.contains(s.ARMOR_CLASS.replace(".", "")) &&
-          !svg.classList.contains(s.INITIATIVE.replace(".", ""))
+          !svg.classList.contains(".ddbc-armor-class-box-svg".replace(".", "")) &&
+          !svg.classList.contains(".ddbc-initiative-box-svg".replace(".", ""))
         ) {
           svg.style.display = "none";
         }
@@ -1813,10 +1800,10 @@ Licensed under Blue Oak Model License 1.0.0
     // Find all SVGs that might contain definitions (defs/symbol)
     // Find all SVGs that might contain definitions (defs/symbol)
     const dom = window.DomManager.getInstance();
-    const svgs = document.querySelectorAll(dom.selectors.SVG.ALL);
+    const svgs = document.querySelectorAll("svg");
     svgs.forEach((svg) => {
       if (
-        svg.querySelector(dom.selectors.SVG.DEFS.replace("svg ", "")) ||
+        svg.querySelector("svg definitions".replace("svg ", "")) ||
         svg.style.display === "none"
       ) {
         const clone = svg.cloneNode(true);
@@ -1891,15 +1878,14 @@ Licensed under Blue Oak Model License 1.0.0
    */
   function flagExtractableElements() {
     const dom = window.DomManager.getInstance();
-    const s = dom.selectors.EXTRACTABLE;
-    if (!s || !s.GROUP) return;
+    if (!"[class*=\"-group\"]") return;
 
     const selectors = [
-      s.GROUP,
-      s.SNIPPET_CLASS,
-      s.ACTIONS_LIST,
-      s.ATTACK_TABLE,
-      s.TRAITS,
+      "[class*=\"-group\"]",
+      "[class*=\"-snippet--class\"]",
+      "[class*=\"styles_actionsList__\"]",
+      "[class*=\"styles_attackTable__\"]",
+      "[class*=\"__traits\"]",
     ];
 
     const elements = Array.from(
@@ -2005,8 +1991,7 @@ Licensed under Blue Oak Model License 1.0.0
     container.dataset.originalId = el.id;
 
     // Store parent section ID for "Apply to all" and grouping logic
-    const s = window.DomManager.getInstance().selectors;
-    const parentSection = el.closest(`${s.UI.SUBSECTION}, ${s.UI.SECTION}`);
+    const parentSection = el.closest(`.ct-subsection, .ct-section`);
     if (parentSection) {
       container.dataset.parentSectionId = parentSection.id;
     }
@@ -2198,7 +2183,7 @@ Licensed under Blue Oak Model License 1.0.0
    */
   function findSectionTitle(el) {
     const dom = window.DomManager.getInstance();
-    const titleEl = el.querySelector(dom.selectors.EXTRACTABLE.HEADER_GENERIC);
+    const titleEl = el.querySelector("h1, h2, h3, h4, h5, [class*=\"head\"], [data-testid*=\"header\"], [data-testid*=\"heading\"]");
     return titleEl ? titleEl.textContent.trim() : null;
   }
 
@@ -2253,8 +2238,8 @@ Licensed under Blue Oak Model License 1.0.0
       ".print-section-minimize",
       ".print-section-restore",
       ".print-section-resize-handle",
-      dom.selectors.SPELLS.FILTER_CLASS,
-      dom.selectors.UI.MENU,
+      ".ct-spells-filter",
+      "menu",
     ];
 
     toRemove.forEach((selector) => {
@@ -2267,7 +2252,7 @@ Licensed under Blue Oak Model License 1.0.0
     if (window.DomManager) {
       const dom = window.DomManager.getInstance();
       const existingHeaders = clone.querySelectorAll(
-        ":scope > " + dom.selectors.EXTRACTABLE.CONTENT_GROUP_HEADER,
+        ":scope > " + ".ct-content-group__header",
       );
       existingHeaders.forEach((h) => h.remove());
     }
@@ -2395,7 +2380,7 @@ Licensed under Blue Oak Model License 1.0.0
         const btn = document.createElement("button");
         btn.textContent = target.name;
         const dom = window.DomManager.getInstance();
-        btn.className = dom.selectors.CORE.THEME_BUTTON.substring(1);
+        btn.className = ".ct-theme-button".substring(1);
         btn.style.textAlign = "left";
         btn.style.padding = "8px 12px";
         btn.style.width = "100%";
@@ -2598,7 +2583,7 @@ Licensed under Blue Oak Model License 1.0.0
     if (!spellsNode) {
       // Use DomManager's generic PRIMARY_BOX selector
       const primaryBoxes = document.querySelectorAll(
-        dom.selectors.UI.PRIMARY_BOX,
+        ".ct-primary-box",
       );
       spellsNode = Array.from(primaryBoxes).find((el) => {
         const style = window.getComputedStyle(el);
@@ -2626,7 +2611,7 @@ Licensed under Blue Oak Model License 1.0.0
       "height: fit-content !important; display: flex !important; flex-direction: column !important; max-height: none !important; overflow: visible !important;";
 
     spellsNode
-      .querySelectorAll(dom.selectors.UI.PRIMARY_BOX + ", section")
+      .querySelectorAll(".ct-primary-box" + ", section")
       .forEach((el) => {
         el.style.cssText +=
           "height: fit-content !important; display: flex !important; flex-direction: column !important; max-height: none !important; overflow: visible !important;";
@@ -2639,11 +2624,11 @@ Licensed under Blue Oak Model License 1.0.0
 
     const bgSvgs = spellsNode.querySelectorAll(
       [
-        dom.selectors.UI.PRIMARY_BOX + " > " + dom.selectors.SVG.ALL,
-        dom.selectors.SVG.REP_BOX,
-        dom.selectors.SVG.BOX_BACKGROUND +
+        ".ct-primary-box" + " > " + "svg",
+        "svg.ddbc-rep-box-background__svg",
+        ".ddbc-box-background" +
           ':not([style*="display: none"]) ' +
-          dom.selectors.SVG.ALL,
+          "svg",
       ].join(", "),
     );
     bgSvgs.forEach((svg) => {
@@ -2658,10 +2643,10 @@ Licensed under Blue Oak Model License 1.0.0
 
     const groupBoxSvgs = spellsNode.querySelectorAll(
       [
-        dom.selectors.SVG.PROFICIENCY,
-        dom.selectors.SVG.SENSES,
-        dom.selectors.SVG.SKILLS,
-        dom.selectors.SVG.SAVING_THROWS,
+        ".ct-proficiency-groups-box svg",
+        ".ct-senses-box svg",
+        ".ct-skills-box svg",
+        ".ct-saving-throws-box svg",
       ].join(", "),
     );
     groupBoxSvgs.forEach((svg) => {
@@ -2672,7 +2657,7 @@ Licensed under Blue Oak Model License 1.0.0
 
     // 4. Identify the Unified Layout Root
     // We want to move everything to .ct-subsections
-    const layoutRoot = document.querySelector(dom.selectors.CORE.SUBSECTIONS);
+    const layoutRoot = document.querySelector(".ct-subsections");
     if (!layoutRoot) {
       if (!window.__DDB_TEST_MODE__) {
         safeLog(
@@ -2691,7 +2676,7 @@ Licensed under Blue Oak Model License 1.0.0
       if (!child.classList.contains("print-section-container")) {
         // Identify a title for the section (e.g. from a header)
         const titleEl = child.querySelector(
-          "header, " + dom.selectors.CORE.SUBSECTION_HEADER,
+          "header, " + ".ct-subsection__header",
         );
         let title = titleEl ? titleEl.textContent.trim() : null;
 
@@ -2755,8 +2740,8 @@ Licensed under Blue Oak Model License 1.0.0
   function moveDefenses() {
     const dom = window.DomManager.getInstance();
     const defensesSection =
-      document.querySelector(dom.selectors.CORE.DEFENSES) ||
-      document.querySelector(dom.selectors.CORE.DEFENSES_ALT);
+      document.querySelector(".ct-sidebar__section--defenses") ||
+      document.querySelector("[class*=\"sidebar__section--defenses\"]");
     if (!defensesSection) return;
 
     const elem = defensesSection.cloneNode(true);
@@ -2764,13 +2749,13 @@ Licensed under Blue Oak Model License 1.0.0
 
     // Remove header
     const header =
-      elem.querySelector(dom.selectors.CORE.DEFENSES_HEADER) ||
-      elem.querySelector(dom.selectors.CORE.DEFENSES_HEADER_ALT);
+      elem.querySelector(".ct-sidebar__section-header") ||
+      elem.querySelector("[class*=\"sidebar__section-header\"]");
     if (header) header.remove();
 
     const combatTablet =
-      document.querySelector(dom.selectors.CORE.COMBAT_TABLET) ||
-      document.querySelector(dom.selectors.CORE.COMBAT_TABLET_ALT);
+      document.querySelector(".ct-status-summary-bar") ||
+      document.querySelector("[class*=\"status-summary-bar\"]");
 
     if (combatTablet) {
       const container = document.createElement("div");
@@ -2789,7 +2774,7 @@ Licensed under Blue Oak Model License 1.0.0
     window.DomManager.getInstance().hideCoreInterface();
 
     const dom = window.DomManager.getInstance();
-    const name = document.querySelector(dom.selectors.CORE.TIDBITS_NAME);
+    const name = document.querySelector(".ddbc-character-tidbits__heading h1");
     if (name) name.style["color"] = "black";
 
     // HP recovery
@@ -2813,7 +2798,7 @@ Licensed under Blue Oak Model License 1.0.0
   function movePortrait() {
     // User Request: Append .ddbc-character-avatar__portrait to .ct-subsection.ct-subsection--primary-box
     const dom = window.DomManager.getInstance();
-    const portrait = document.querySelector(dom.selectors.UI.PORTRAIT);
+    const portrait = document.querySelector(".ddbc-character-avatar__portrait");
     // UI.PRIMARY_BOX might be .ct-primary-box, check if we have the specific subsection target
     // The previous code targeted .ct-subsection.ct-subsection--primary-box
     const target = document.querySelector(
@@ -2911,7 +2896,7 @@ Licensed under Blue Oak Model License 1.0.0
    */
   function separateAbilities() {
     const dom = window.DomManager.getInstance();
-    const abilities = document.querySelectorAll(dom.selectors.CORE.ABILITY);
+    const abilities = document.querySelectorAll(".ct-quick-info__ability");
     const layoutRoot = document.getElementById("print-layout-wrapper");
 
     if (!abilities.length || !layoutRoot) return;
@@ -2924,7 +2909,7 @@ Licensed under Blue Oak Model License 1.0.0
       const parentSection = ability.closest("section");
       if (parentSection) parentsToRemove.add(parentSection);
 
-      const nameEl = ability.querySelector(dom.selectors.CORE.ABILITY_NAME);
+      const nameEl = ability.querySelector(".ct-quick-info__ability-name");
       const name = nameEl ? nameEl.textContent.trim() : `Ability ${index + 1}`;
       const id = `section-Ability-${name}`;
 
@@ -2957,7 +2942,7 @@ Licensed under Blue Oak Model License 1.0.0
    */
   function separateQuickInfoBoxes() {
     const dom = window.DomManager.getInstance();
-    const boxes = document.querySelectorAll(dom.selectors.CORE.QUICK_INFO_BOX);
+    const boxes = document.querySelectorAll(".ct-quick-info__box");
     const layoutRoot = document.getElementById("print-layout-wrapper");
 
     if (!boxes.length || !layoutRoot) return;
@@ -2971,11 +2956,11 @@ Licensed under Blue Oak Model License 1.0.0
 
     boxes.forEach((box, index) => {
       // Collect parent for cleanup (usually .ct-quick-info)
-      const parentGroup = box.closest(dom.selectors.CORE.QUICK_INFO);
+      const parentGroup = box.closest(".ct-quick-info");
       if (parentGroup) parentsToRemove.add(parentGroup);
 
       const labelEl = box.querySelector(
-        dom.selectors.CORE.QUICK_INFO_BOX_LABEL,
+        ".ct-quick-info__box-label",
       );
       const label = labelEl ? labelEl.textContent.trim() : `Box ${index + 1}`;
       const id = `section-Box-${label.replace(/\s+/g, "-")}`;
@@ -3001,7 +2986,7 @@ Licensed under Blue Oak Model License 1.0.0
     });
 
     // Extract Health if present (User Request)
-    const health = document.querySelector(dom.selectors.UI.QUICK_INFO_HEALTH);
+    const health = document.querySelector(".ct-quick-info__health");
     if (health) {
       // Only extract if it hasn't been extracted yet
       if (!document.getElementById("section-Quick-Info-Health")) {
@@ -3028,7 +3013,7 @@ Licensed under Blue Oak Model License 1.0.0
 
         // Mark parent for removal if health was inside it
         const parentGroup = health.parentElement; // usually .ct-quick-info
-        if (parentGroup && parentGroup.matches(dom.selectors.CORE.QUICK_INFO)) {
+        if (parentGroup && parentGroup.matches(".ct-quick-info")) {
           parentsToRemove.add(parentGroup);
         }
       }
@@ -3043,17 +3028,16 @@ Licensed under Blue Oak Model License 1.0.0
    */
   function removeSearchBoxes() {
     const dom = window.DomManager.getInstance();
-    const s = dom.selectors;
     const searchSelectors = [
-      s.UI.HEADER_WRAPPER,
-      s.UI.SEARCH_INPUT,
-      s.UI.FILTER_GENERIC,
+      ".header-wrapper",
+      "input[type=\"search\"]",
+      "[class*=\"filter\"]",
       // Add DomManager selectors
-      s.SPELLS.FILTER,
-      s.EQUIPMENT.FILTER,
-      s.EQUIPMENT.INVENTORY_FILTER,
-      s.EXTRAS.FILTER,
-      s.TRAITS.MANAGEMENT_LINK,
+      ".ct-spells-filter",
+      ".ct-equipment__filter",
+      ".ct-inventory__filter",
+      ".ct-extras__filter",
+      ".ct-features__management-link",
     ].filter(Boolean); // Filter out undefineds
 
     // Flatten and query
@@ -3073,8 +3057,6 @@ Licensed under Blue Oak Model License 1.0.0
     if (document.getElementById(styleId)) return;
 
     const dom = window.DomManager.getInstance();
-    let s = dom.selectors;
-
     const style = document.createElement("style");
     style.id = styleId;
     style.textContent = `
@@ -3175,6 +3157,47 @@ Licensed under Blue Oak Model License 1.0.0
             --border-img-width: 80px;
             --border-img-slice: 205;
             --border-img-outset: 25px;
+        }
+
+        /* Context Menu Styles */
+        .be-context-menu {
+            position: absolute;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            padding: 4px 0;
+            z-index: 32000;
+            display: none;
+            min-width: 120px;
+        }
+        .be-context-menu button {
+            display: block;
+            width: 100%;
+            text-align: left !important;
+            padding: 8px 12px !important;
+            border: none !important;
+            background: none !important;
+            cursor: pointer !important;
+            font-size: 12px !important;
+            color: #333 !important;
+            height: auto !important;
+            border-radius: 0 !important;
+            filter: none !important;
+        }
+        .be-context-menu button:hover {
+            background-color: #f5f5f5 !important;
+        }
+        .be-more-options-button {
+            cursor: pointer;
+            font-size: 16px;
+            background: none;
+            border: none;
+            padding: 0 4px;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         /* Layer Management Panel Styles */
@@ -3307,53 +3330,53 @@ Licensed under Blue Oak Model License 1.0.0
             padding: 0 !important;
         }
 
-        ${s.UI.TOOLS_TARGET} {
+        #character-tools-target {
             background-color: white;
         }
 
         /* Deep Clean: Aggressively hide top elements */
         [data-original-id="section-Section-6"] .print-section-header > span, 
-        [data-original-id="section-Section-6"] .print-section-content ${s.UI.PRIMARY_BOX}, 
+        [data-original-id="section-Section-6"] .print-section-content .ct-primary-box, 
         div#section-Section-6 .print-section-header > span, 
-        div#section-Section-6 .print-section-content ${s.UI.PRIMARY_BOX}, 
-        ${s.CORE.FOOTER}, 
-        ${s.CORE.HEADER_MAIN}, 
-        ${s.CORE.MEGA_MENU_TARGET}, 
-        ${s.CORE.MM_NAVBAR},
-        ${s.CORE.NAVIGATION}, 
-        ${s.CORE.NOTIFICATIONS},
-        ${s.CORE.SITE_ALERT}, 
-        ${s.CORE.SITE_BAR}, 
-        ${s.CORE.WATERMARK}, 
-        ${s.CSS.DIALOG_SIBLING},
-        ${s.CSS.SHEET_BEFORE},
-        ${s.EQUIPMENT.FILTER},
-        ${s.EXTRAS.INTERACTIONS},
-        ${s.SPELLS.ACTION},
-        ${s.UI.COLLAPSED_ACTIONS},
-        ${s.UI.DICE_ROLLER},
-        ${s.UI.FEATURES_LINK},
-        ${s.UI.HEADER_DESKTOP},
-        ${s.UI.QUICK_INFO_HEALTH_HEADER},
-        ${s.UI.QUICK_INFO_INSPIRATION},
-        ${s.UI.SUBSECTION_FOOTER},
-        ${s.UI.THEME_LINK},
-        ${s.UI.TIDBITS_HEADING} {
+        div#section-Section-6 .print-section-content .ct-primary-box, 
+        footer, 
+        header.main, 
+        #mega-menu-target, 
+        .mm-navbar,
+        [class*="ct-character-nav"], 
+        .notifications-wrapper,
+        .ddb-site-alert, 
+        .site-bar, 
+        .watermark, 
+        dialog ~ div:not(#site-main):not([id^="print-enhance"]):not([class*="be-"]),
+        .ct-character-sheet:before,
+        .ct-equipment__filter,
+        .ct-extras-filter__interactions,
+        .ct-spells-spell__action,
+        [class$="__actions--collapsed"],
+        .dice-rolling-panel,
+        .ct-features__management-link,
+        .ct-character-sheet-desktop .ct-character-header-desktop,
+        .ct-quick-info__health h1 + div,
+        .ct-quick-info__inspiration,
+        .ct-subsection__footer,
+        .ddbc-theme-link,
+        .ddbc-character-tidbits__heading {
             display: none !important;
         }
 
-        ${s.UI.QUICK_INFO_HEALTH} h1 {
+        .ct-quick-info__health h1 {
             position: static;
             transform: none;
         }
         /* REsizable */
-        ${s.CORE.SHEET_DESKTOP} ${s.UI.SUBSECTION} {
+        .ct-character-sheet-desktop .ct-subsection {
             position: static!important;
             display: flex!important;
             flex-flow: row!important;
             height: 100%;
         }
-        ${s.CORE.SHEET_DESKTOP} ${s.CORE.SUBSECTIONS} {
+        .ct-character-sheet-desktop .ct-subsections {
             height: auto !important;
             display: block;
             width: 100%;
@@ -3361,28 +3384,28 @@ Licensed under Blue Oak Model License 1.0.0
         }
 
         /* User Request: Side Panel Fixed & Scrollable */
-        ${s.CORE.SIDEBAR_PORTAL} {
+        .ct-sidebar__portal {
             position: fixed !important;
             top: 0 !important;
             right: 0 !important;
             height: 100% !important;
             z-index: 9999 !important;
         }
-        ${s.CORE.SPELL_MANAGER} {
+        .ct-spell-manager {
             overflow-y: auto !important;
             max-height: 100% !important;
         }
-        ${s.CORE.SIDEBAR} {
+        .ct-sidebar {
             position: static !important;
         }
-        ${s.UI.SIDEBAR_INNER} {
+        .ct-sidebar__inner {
             overflow-y: auto !important;
             overflow-x: hidden !important;
         }
-        ${s.UI.CHARACTER_SHEET} {
+        .ct-character-sheet {
             background: url(https://www.dndbeyond.com/avatars/61/510/636453152253102859.jpeg) no-repeat, url(https://www.dndbeyond.com/attachments/0/84/background_texture.png) #333 !important;
         }
-        ${s.CORE.SHEET_DESKTOP} {
+        .ct-character-sheet-desktop {
             background-color: white;
             height: 100%;
             -webkit-box-shadow: 5px 5px 15px 5px #3f3f3fff;
@@ -3397,13 +3420,13 @@ Licensed under Blue Oak Model License 1.0.0
         }
 
         @media (min-width: 1200px) {
-            ${s.UI.PRIMARY_BOX} {
+            .ct-primary-box {
                 width: 100% !important;
             }
         }
 
         @media screen {
-            ${s.CORE.SHEET_DESKTOP} {
+            .ct-character-sheet-desktop {
                 max-width: none !important;
                 margin: 0 !important;
                 width: 100% !important;
@@ -3461,11 +3484,8 @@ Licensed under Blue Oak Model License 1.0.0
             display: none !important;
         }
 
-        .be-section-wrapper:hover {
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-        }
-
-        .be-hover-highlight,
+        .be-active-layer .be-section-wrapper:hover,
+        .be-active-layer .be-shape-wrapper:hover,
         .be-focus-highlight-hover {
             filter: drop-shadow(0 0 15px #28a745) drop-shadow(0 0 15px #28a745) !important;
             transition: filter 0.3s ease-in-out;
@@ -3548,7 +3568,7 @@ Licensed under Blue Oak Model License 1.0.0
             pointer-events: auto !important;
         }
 
-        ${s.UI.PRINT_CONTAINER} {
+        .print-section-container {
             --reduce-height-by: 0px;
             --reduce-width-by: 0px;
             background-color: rgba(255, 255, 255, 0.85);
@@ -3566,7 +3586,7 @@ Licensed under Blue Oak Model License 1.0.0
             z-index: 0;
         }
 
-        ${s.UI.PRINT_CONTAINER}:not(.be-no-border)::before {
+        .print-section-container:not(.be-no-border)::before {
             content: "";
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -3598,43 +3618,43 @@ Licensed under Blue Oak Model License 1.0.0
             display: none !important;
         }
 
-        ${s.UI.PRINT_CONTAINER}, 
-        ${s.UI.PRINT_CONTAINER} * {
+        .print-section-container, 
+        .print-section-container * {
             font-size: calc(10px * var(--be-font-scale, 1)) !important;
             white-space: normal !important;
             overflow-wrap: break-word !important;
         }
 
-        ${s.UI.PRINT_CONTAINER} ${s.COMBAT.STATUSES} h2 *,
-        ${s.UI.PRINT_CONTAINER} ${s.COMBAT.STATUSES} h2 + *,
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.QUICK_INFO} * {
+        .print-section-container .ct-combat__statuses h2 *,
+        .print-section-container .ct-combat__statuses h2 + *,
+        .print-section-container .ct-quick-info * {
             font-size: calc(12px * var(--be-font-scale, 1)) !important;
         }
 
-        ${s.UI.PRINT_CONTAINER} ${s.UI.QUICK_INFO_HEALTH} * {
+        .print-section-container .ct-quick-info__health * {
             font-size: 14px !important;
         }
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_STYLES},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.SECTION_HEADING_STYLES},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_SUFFIX},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_SUFFIX_ALT},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_SUFFIX_ALT} ,
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.GROUP_HEADER_CONTENT} {
+        .print-section-container [class^="styles_heading__"],
+        .print-section-container [class^="styles_sectionHeading__"],
+        .print-section-container [class$="-heading"],
+        .print-section-container [class$="__heading"],
+        .print-section-container [class$="__heading"] ,
+        .print-section-container .ct-content-group__header-content {
             font-size: 12px !important;
             font-weight: bold !important;
             text-transform: uppercase;
             border-bottom: 1px solid #979797;
             margin-bottom: 4px;
         }
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.SECTION_HEADING_STYLES},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_SUFFIX_ALT},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_SUFFIX_ALT}  {
+        .print-section-container [class^="styles_sectionHeading__"],
+        .print-section-container [class$="__heading"],
+        .print-section-container [class$="__heading"]  {
             font-size: 10px !important;
         }
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.SECTION_HEADING_STYLES},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_SUFFIX_ALT},
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_SUFFIX_ALT} ,
-        ${s.UI.PRINT_CONTAINER} ${s.CORE.HEADING_STYLES} ${s.CORE.HEADING_SUFFIX} {
+        .print-section-container [class^="styles_sectionHeading__"],
+        .print-section-container [class$="__heading"],
+        .print-section-container [class$="__heading"] ,
+        .print-section-container [class^="styles_heading__"] [class$="-heading"] {
             border-bottom: 0
         }
         .print-section-content {
@@ -3644,44 +3664,44 @@ Licensed under Blue Oak Model License 1.0.0
             flex-direction: column !important;
             position: relative !important;
         }
-        ${s.SENSES.CALLOUT_VALUE},
-        ${s.CORE.DICE_CONTAINER},
-        ${s.CORE.DICE_CONTAINER} span {
+        .ct-senses__callout-value,
+        .integrated-dice__container,
+        .integrated-dice__container span {
             font-size: 16px !important;
         }
-        ${s.COMBAT.AC_VALUE} {
+        .ddbc-armor-class-box__value {
             font-size: 26px !important;
         }
 
             /* Scaling helper */
-        ${s.UI.PRINT_CONTAINER}[data-scaling="true"] .print-section-content > div {
+        .print-section-container[data-scaling="true"] .print-section-content > div {
             transform-origin: top left;
         }
-        ${s.UI.PRINT_CONTAINER} ${s.COMPACT.ROW_HEADER_DIV}, 
-        ${s.UI.PRINT_CONTAINER} ${s.COMPACT.GENERIC_CONTENT_DIV_DIV} {
+        .print-section-container div[class$="-row-header"] > div, 
+        .print-section-container div[class$="-content"] > div > div {
             min-width: 38px;
         }
-        ${s.UI.PRINT_CONTAINER} ${s.COMPACT.ROW_HEADER_NAME}, 
-        ${s.UI.PRINT_CONTAINER} ${s.COMPACT.CONTENT_NAME} {
+        .print-section-container div[class$="-row-header"] div[class$="--name"], 
+        .print-section-container div[class$="-content"] div[class$="__name"] {
             max-width: 72px;
         }
-        ${s.UI.PRINT_CONTAINER} ${s.COMPACT.CONTENT_SLOT_NAME} {
+        .print-section-container div[class$="-content"] div[class$="-slot__name"] {
             max-width: 200px;
         }
-        ${s.UI.PRINT_CONTAINER} ${s.COMPACT.CONTENT_ITEM_NAME} {
+        .print-section-container div[class$="-content"] div[class$="-item__name"] {
             max-width: 136px;
         }
     
-        ${s.UI.PORTRAIT} {
+        .ddbc-character-avatar__portrait {
             width: 100%;
         }
         
         /* Ability Summary */
 
-        ${s.ABILITY.SUMMARY} {
+        .ddbc-ability-summary {
             display: contents;
         }
-        ${s.ABILITY.SUMMARY_SECONDARY} {
+        .ddbc-ability-summary__secondary {
             position: static!important;
             border: 2px solid var(--btn-color);
             border-radius: 150px;
@@ -3690,7 +3710,7 @@ Licensed under Blue Oak Model License 1.0.0
             width: fit-content;
             background: white;
         }
-        ${s.ABILITY.SUMMARY_LABEL} {
+        .ddbc-ability-summary__label {
             font-size: 12px !important;
         }
 
@@ -3722,16 +3742,16 @@ Licensed under Blue Oak Model License 1.0.0
         }
 
         /* Skills specific compact logic (already mostly covered by global above) */
-        ${s.SKILLS.CONTAINER}, ${s.SKILLS.CONTAINER} * {
+        .ct-skills, .ct-skills * {
             font-size: 10px !important;
         }
 
-        ${s.SKILLS.BOX} {
+        .ct-skills__box {
             overflow: hidden !important;
             border: 1px solid black !important;
         }
-        ${s.SKILLS.CONTAINER} > div > div,
-        ${s.SKILLS.CONTAINER} > div > div > * {
+        .ct-skills > div > div,
+        .ct-skills > div > div > * {
             height: 26px !important;
             padding: 0 !important;
             margin: 0 !important;
@@ -3979,7 +3999,7 @@ Licensed under Blue Oak Model License 1.0.0
                 padding: 0 !important;
             }
             
-            html, body, ${s.CORE.SHEET_DESKTOP} {
+            html, body, .ct-character-sheet-desktop {
                 margin: 0 !important;
                 padding: 0 !important;
                 box-shadow: none !important;
@@ -4008,7 +4028,8 @@ Licensed under Blue Oak Model License 1.0.0
 
             /* Selection and Hover Highlights */
             .be-active-wrapper,
-            .be-hover-highlight,
+            .be-section-wrapper:hover,
+            .be-shape-wrapper:hover,
             .be-focus-highlight-hover,
             .be-active-section {
                 filter: none !important;
@@ -4029,7 +4050,7 @@ Licensed under Blue Oak Model License 1.0.0
                 opacity: 0 !important;
             }
 
-            ${s.SPELLS.FILTER} {
+            .ct-spells-filter {
                 visibility: hidden !important;
             }
         }
@@ -4184,10 +4205,10 @@ Licensed under Blue Oak Model License 1.0.0
     const dom = window.DomManager.getInstance();
     const staticHeader = document.createElement("div");
     staticHeader.className =
-      dom.selectors.EXTRACTABLE.CONTENT_GROUP_HEADER.substring(1);
+      ".ct-content-group__header".substring(1);
     const staticHeaderContent = document.createElement("div");
     staticHeaderContent.className =
-      dom.selectors.CORE.GROUP_HEADER_CONTENT.substring(1);
+      ".ct-content-group__header-content".substring(1);
     staticHeaderContent.textContent = snapshot.title;
     staticHeader.appendChild(staticHeaderContent);
 
@@ -4212,7 +4233,7 @@ Licensed under Blue Oak Model License 1.0.0
     wrapper.addEventListener("dblclick", async (e) => {
       e.stopPropagation();
       const staticTitleSpan = container.querySelector(
-        dom.selectors.CORE.GROUP_HEADER_CONTENT,
+        ".ct-content-group__header-content",
       );
       const currentTitle =
         wrapper.dataset.title ||
@@ -4364,75 +4385,8 @@ Licensed under Blue Oak Model License 1.0.0
       rotateBtn.style.display = "block";
     }
 
-    // Action Buttons logic (specific for shapes)
-    const actionContainer = getOrCreateActionContainer(container);
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "be-shape-delete be-robust-button";
-    deleteBtn.innerHTML = "🗑️";
-    deleteBtn.title = "Delete Shape";
-    deleteBtn.onclick = (e) => {
-      e.stopPropagation();
-      if (confirm("Delete this shape?")) {
-        wrapper.remove();
-        showFeedback("Shape deleted");
-        updateLayoutBounds();
-      }
-    };
-
-    const rotateToolBtn = document.createElement("button");
-    rotateToolBtn.className = "be-shape-rotate be-robust-button";
-    rotateToolBtn.innerHTML = "↻";
-    rotateToolBtn.title = "Toggle Rotation Tool";
-    rotateToolBtn.onclick = (e) => {
-      e.stopPropagation();
-      const event = new CustomEvent("be-rotate-click", { bubbles: true });
-      rotateToolBtn.dispatchEvent(event);
-    };
-
-    const cloneBtn = document.createElement("button");
-    cloneBtn.className = "be-shape-clone be-robust-button";
-    cloneBtn.innerHTML = "📋";
-    cloneBtn.title = "Clone Shape";
-    cloneBtn.onclick = (e) => {
-      e.stopPropagation();
-      // Parse current position and offset by 16px
-      const left = parseInt(wrapper.style.left) || 0;
-      const top = parseInt(wrapper.style.top) || 0;
-      createShape(assetPath, {
-        left: left + 16 + "px",
-        top: top + 16 + "px",
-        width: container.style.width,
-        height: container.style.height,
-        rotation: wrapper.dataset.rotation,
-      });
-      showFeedback("Shape cloned");
-    };
-
-    const switchBtn = document.createElement("button");
-    switchBtn.className = "be-shape-switch be-robust-button";
-    switchBtn.innerHTML = "🔄";
-    switchBtn.title = "Switch Shape Asset";
-    switchBtn.onclick = async (e) => {
-      e.stopPropagation();
-      // Determine folder based on current asset
-      const folder = assetPath.includes("assets/shapes/")
-        ? "assets/shapes/"
-        : "assets/";
-      const result = await showShapePickerModal(assetPath, folder);
-      if (result) {
-        // Update the shape asset without replacing the wrapper
-        assetPath = result.assetPath; // Update local variable for next clone/switch
-        container.dataset.assetPath = assetPath;
-        applyShapeAsset(container, assetPath);
-        showFeedback("Shape switched");
-      }
-    };
-
-    actionContainer.appendChild(rotateToolBtn);
-    actionContainer.appendChild(cloneBtn);
-    actionContainer.appendChild(switchBtn);
-    actionContainer.appendChild(deleteBtn);
+    // Action Buttons logic (specific for shapes) handled by injectCloneButtons
+    injectCloneButtons(wrapper);
 
     // Asset Application
     container.dataset.assetPath = assetPath;
@@ -4592,6 +4546,23 @@ Licensed under Blue Oak Model License 1.0.0
    * Helper to apply asset to a shape container via class or inline style.
    */
   function applyShapeAsset(container, assetPath) {
+    if (!container) return;
+
+    // Type safety check
+    if (typeof assetPath !== "string") {
+      safeLog(
+        "error",
+        `[DDB Print] applyShapeAsset: assetPath must be a string, got ${typeof assetPath}`,
+        assetPath,
+      );
+      // Try to recover if it's the result object
+      if (assetPath && typeof assetPath.assetPath === "string") {
+        assetPath = assetPath.assetPath;
+      } else {
+        return;
+      }
+    }
+
     // Remove existing classes from metadata
     Object.values(ASSET_METADATA).forEach((meta) => {
       if (meta.className) container.classList.remove(meta.className);
@@ -4894,10 +4865,10 @@ Licensed under Blue Oak Model License 1.0.0
       const dom = window.DomManager.getInstance();
       const header = document.createElement("div");
       header.className =
-        dom.selectors.EXTRACTABLE.CONTENT_GROUP_HEADER.substring(1);
+        ".ct-content-group__header".substring(1);
       const headerContent = document.createElement("div");
       headerContent.className =
-        dom.selectors.CORE.GROUP_HEADER_CONTENT.substring(1);
+        ".ct-content-group__header-content".substring(1);
       headerContent.textContent = spell.name;
       header.appendChild(headerContent);
 
@@ -5060,6 +5031,19 @@ Licensed under Blue Oak Model License 1.0.0
   function clearBorderStyles(el) {
     if (!el) return;
     el.classList.remove(...ALL_BORDER_STYLES);
+  }
+
+  /**
+   * Applies a border style to a section.
+   */
+  function applyBorderStyle(section, style) {
+    if (!section || !style) return;
+    const styleId = typeof style === "string" ? style : style.style;
+    clearBorderStyles(section);
+    if (styleId && styleId !== "no-border") {
+      section.classList.add(styleId);
+    }
+    if (typeof updateLayoutBounds === "function") updateLayoutBounds();
   }
 
   /**
@@ -8032,7 +8016,6 @@ Licensed under Blue Oak Model License 1.0.0
    * @param {boolean} isSilent If true, suppresses feedback messages.
    */
   async function splitSkillsBox(isSilent = false) {
-    const s = window.DomManager.getInstance().selectors;
     const skillsBox =
       document.querySelector(".ct-skills__box") ||
       document.querySelector(".ct-subsection--skills");
@@ -8110,21 +8093,58 @@ Licensed under Blue Oak Model License 1.0.0
   /**
    * Injects clone buttons and compact toggles into sections.
    */
+  /**
+   * Injects clone buttons and compact toggles into sections and shapes.
+   */
   function injectCloneButtons(context = document) {
-    const s = window.DomManager.getInstance().selectors;
-    const selector = `${s.UI.SUBSECTION}, ${s.UI.SECTION}, .print-section-container, .be-shape-container`;
+    const selector = `.ct-subsection, .ct-section, .print-section-container, .be-shape-container`;
     // If the context itself matches the selector, include it
-    const elements = Array.from(context.querySelectorAll(selector));
+    let elements = Array.from(context.querySelectorAll(selector));
     if (context instanceof HTMLElement && context.matches(selector)) {
       elements.push(context);
     }
 
+    // Filter out redundant containers (e.g., .print-section-container inside a .ct-subsection)
+    elements = elements.filter((el) => {
+      if (el.classList.contains("print-section-container")) {
+        const parentSection = el.parentElement?.closest(
+          ".ct-subsection, .ct-section",
+        );
+        if (parentSection) return false;
+      }
+      return true;
+    });
+
     elements.forEach((section) => {
       const actionContainer = getOrCreateActionContainer(section);
+      const isShape = section.classList.contains("be-shape-container");
+
+      // Get or create context menu
+      let menu = actionContainer.querySelector(".be-context-menu");
+      if (!menu) {
+        menu = createContextMenu();
+        actionContainer.appendChild(menu);
+
+        const trigger = createMenuTrigger();
+        trigger.addEventListener("click", (e) => {
+          e.stopPropagation();
+          // Position menu
+          menu.style.top = "100%";
+          menu.style.right = "0";
+          toggleContextMenu(menu);
+        });
+        actionContainer.appendChild(trigger);
+      }
 
       // Helper to add robust button
-      const addRobustButton = (className, icon, title, action) => {
-        if (actionContainer.querySelector(`.${className}`)) return;
+      const addRobustButton = (
+        className,
+        icon,
+        title,
+        action,
+        targetContainer = actionContainer,
+      ) => {
+        if (targetContainer.querySelector(`.${className}`)) return;
 
         const btn = document.createElement("button");
         btn.className = className;
@@ -8134,7 +8154,7 @@ Licensed under Blue Oak Model License 1.0.0
         const log = (msg) =>
           safeLog(
             "log",
-            `[DDB Print] Section Button ${className} (${section.id}): ${msg}`,
+            `[DDB Print] Button ${className} (${section.id}): ${msg}`,
           );
 
         btn.addEventListener("mousedown", () => log("Mousedown"));
@@ -8142,162 +8162,243 @@ Licensed under Blue Oak Model License 1.0.0
         btn.addEventListener("click", async (e) => {
           e.stopPropagation();
           log("Clicked");
+          if (targetContainer === menu) {
+            menu.style.display = "none";
+            document.removeEventListener("mousedown", menu._closeListener);
+          }
           try {
             await action(e);
           } catch (err) {
-            safeLog(
-              "error",
-              `[DDB Print] Error in section button ${className}:`,
-              err,
-            );
+            safeLog("error", `[DDB Print] Error in button ${className}:`, err);
           }
         });
 
-        actionContainer.appendChild(btn);
+        targetContainer.appendChild(btn);
       };
 
-      // 0. Select Section Button
-      addRobustButton(
-        "be-select-section-button",
-        "🎯",
-        "Select Section for Editing",
-        (e) => {
-          setActiveSection(section);
-          showFeedback("Section selected for editing");
-        },
-      );
+      if (!isShape) {
+        // --- SECTION ACTIONS ---
 
-      // 1. Clone Button
-      addRobustButton("be-clone-button", "📋", "Clone Section", async (e) => {
-        const id = section.id || "unknown";
-        const wrapper = section.closest(".be-section-wrapper") || section;
-        const sectionName =
-          wrapper.dataset.title ||
-          section
-            .querySelector(
-              `${s.CORE.SUBSECTION_HEADER}, ${s.CORE.SECTION_HEADER}, .print-section-header span`,
-            )
-            ?.textContent.trim() ||
-          "Section";
-
-        const title = await showInputModal(
-          "Clone Section",
-          `Enter a name for this ${sectionName} clone:`,
-          `${sectionName} (Clone)`,
-        );
-
-        if (title) {
-          const snapshot = captureSectionSnapshot(id);
-          if (snapshot) {
-            snapshot.id = `clone-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-            snapshot.title = title;
-
-            const clone = renderClonedSection(snapshot);
-            if (clone) {
-              showFeedback(`Cloned: ${title}`);
-              updateLayoutBounds();
-              injectCloneButtons();
-              injectSpellDetailTriggers(clone);
-            }
-          } else {
-            showFeedback("Failed to capture snapshot.");
-          }
-        }
-      });
-
-      // 2. Compact Mode Button
-      const sourceId = section.dataset.originalId || section.id || "";
-      const isNumbered = /^section-Section-\d+$/.test(sourceId);
-
-      if (sourceId && !isNumbered) {
+        // 0. Select Section Button (Visible)
         addRobustButton(
-          "be-compact-button",
-          "📏",
-          "Toggle Compact Mode",
-          (e) => {
-            const btn = e.currentTarget;
-            const isCompact = section.classList.toggle("be-compact-mode");
-            btn.style.backgroundColor = isCompact
-              ? "var(--btn-color)"
-              : "var(--btn-color-highlight)";
-            updateLayoutBounds();
+          "be-select-section-button",
+          "🎯",
+          "Select Section for Editing",
+          () => {
+            setActiveSection(section);
+            showFeedback("Section selected for editing");
           },
         );
-      }
 
-      // 3. Border Style Button
-      addRobustButton(
-        "be-border-button",
-        "🖼️",
-        "Select Border Style",
-        async (e) => {
-          const currentStyle =
-            ALL_BORDER_STYLES.find((style) =>
-              section.classList.contains(style),
-            ) || "default-border";
-          const result = await showBorderPickerModal(currentStyle);
+        // 1. Clone Button (Menu)
+        addRobustButton(
+          "be-clone-button",
+          "📋",
+          "Clone Section",
+          async () => {
+            const id = section.id || "unknown";
+            const wrapper = section.closest(".be-section-wrapper") || section;
+            const sectionName =
+              wrapper.dataset.title ||
+              section
+                .querySelector(
+                  `.ct-subsection__header, .ct-section__header, .print-section-header span`,
+                )
+                ?.textContent.trim() ||
+              "Section";
 
-          if (result) {
-            clearBorderStyles(section);
-            section.classList.add(result.style);
-            updateLayoutBounds();
-          }
-        },
-      );
+            const title = await showInputModal(
+              "Clone Section",
+              `Enter a name for this ${sectionName} clone:`,
+              `${sectionName} (Clone)`,
+            );
 
-      const isShape = section.classList.contains("be-shape-container");
+            if (title) {
+              const snapshot = captureSectionSnapshot(id);
+              if (snapshot) {
+                snapshot.id = `clone-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+                snapshot.title = title;
 
-      // 4. Delete Button (Generic for all)
-      addRobustButton(
-        "be-clone-delete",
-        "🗑️",
-        isShape ? "Delete Shape" : "Delete Section",
-        (e) => {
-          const wrapper =
-            section.closest(".be-section-wrapper") ||
-            section.closest(".be-shape-wrapper");
+                const clone = renderClonedSection(snapshot);
+                if (clone) {
+                  showFeedback(`Cloned: ${title}`);
+                  updateLayoutBounds();
+                  injectCloneButtons();
+                  injectSpellDetailTriggers(clone);
+                }
+              } else {
+                showFeedback("Failed to capture snapshot.");
+              }
+            }
+          },
+          menu,
+        );
+
+        // 2. Compact Mode Button (Menu)
+        const sourceId = section.dataset.originalId || section.id || "";
+        const isNumbered = /^section-Section-\d+$/.test(sourceId);
+
+        if (sourceId && !isNumbered) {
+          addRobustButton(
+            "be-compact-button",
+            "📏",
+            "Toggle Compact Mode",
+            (e) => {
+              const btn = e.currentTarget;
+              const wrapper = section.closest(".be-section-wrapper") || section;
+              const container =
+                wrapper.querySelector(".print-section-container") ||
+                (wrapper.classList.contains("print-section-container")
+                  ? wrapper
+                  : null);
+
+              if (container) {
+                const isCompact = container.classList.toggle("be-compact-mode");
+                btn.innerHTML = isCompact ? "📐" : "📏";
+                showFeedback(
+                  isCompact ? "Compact mode ON" : "Compact mode OFF",
+                );
+                updateLayoutBounds();
+              }            },
+            menu,
+          );
+        }
+
+        // 3. Border Style Button (Menu)
+        addRobustButton(
+          "be-border-button",
+          "🖼️",
+          "Change Border Style",
+          async () => {
+            const style = await showBorderPickerModal();
+            if (style !== null) {
+              applyBorderStyle(section, style);
+              showFeedback(`Border applied: ${style || "None"}`);
+            }
+          },
+          menu,
+        );
+
+        // 4. Split Skills Button (Menu)
+        const isSkills =
+          section.querySelector(".ct-skills__box") ||
+          section.querySelector(".ct-subsection--skills");
+        if (isSkills && !window.skillsSplit) {
+          addRobustButton(
+            "be-split-skills-button",
+            "🔪",
+            "Split Skills into Individual Stats",
+            async () => {
+              await splitSkillsBox();
+            },
+            menu,
+          );
+        }
+
+        // 5. Delete Button (for clones - Visible)
+        if (section.id && section.id.startsWith("clone-")) {
+          addRobustButton(
+            "be-clone-delete",
+            "🗑️",
+            "Delete this Clone",
+            () => {
+              const wrapper = section.closest(".be-section-wrapper") || section;
+              if (
+                confirm("Are you sure you want to delete this cloned section?")
+              ) {
+                wrapper.remove();
+                updateLayoutBounds();
+                showFeedback("Clone deleted");
+              }
+            },
+          );
+        }
+      } else {
+        // --- SHAPE ACTIONS ---
+
+        // 1. Delete Shape (Visible)
+        addRobustButton("be-shape-delete", "🗑️", "Delete Shape", () => {
+          const wrapper = section.closest(".be-shape-wrapper");
           if (wrapper) {
-            if (
-              confirm(
-                `Are you sure you want to delete this ${isShape ? "shape" : "section"}?`,
-              )
-            ) {
+            if (confirm("Are you sure you want to delete this shape?")) {
               wrapper.remove();
               updateLayoutBounds();
               refreshLayers();
             }
           }
-        },
-      );
+        });
 
-      // 5. Rotate Tool Button (only for shapes)
-      if (isShape) {
+        // 2. Rotate Shape (Visible)
         addRobustButton("be-shape-rotate", "↻", "Toggle Rotation Tool", (e) => {
           const event = new CustomEvent("be-rotate-click", { bubbles: true });
           e.target.dispatchEvent(event);
         });
-      }
 
-      // 6. Split Skills Button (Only for Skills Box)
-      const isSkillsBox =
-        section.querySelector(".ct-skills__box") ||
-        section.classList.contains("ct-skills__box") ||
-        section.querySelector(".ct-subsection--skills") ||
-        section.classList.contains("ct-subsection--skills");
-      if (isSkillsBox && !section.classList.contains("be-clone")) {
+        // 3. Switch Shape Asset (Menu)
         addRobustButton(
-          "be-split-skills-button",
-          "✂️",
-          "Split Skills Box into Stat Groups",
+          "be-shape-switch",
+          "🔄",
+          "Switch Shape Asset",
           async () => {
-            if (typeof window.splitSkillsBox === "function") {
-              await window.splitSkillsBox();
+            const currentAsset = section.dataset.assetPath || "";
+            const folder = currentAsset.includes("assets/shapes/")
+              ? "assets/shapes/"
+              : "assets/";
+            const result = await showShapePickerModal(currentAsset, folder);
+            if (result) {
+              // result should be {assetPath: '...'}
+              const newPath = result.assetPath || result; // Handle both object and raw string
+              if (typeof newPath === "string") {
+                section.dataset.assetPath = newPath;
+                applyShapeAsset(section, newPath);
+                showFeedback(
+                  `Shape asset updated: ${result.name || "New Asset"}`,
+                );
+              } else {
+                safeLog(
+                  "error",
+                  "[DDB Print] Invalid result from shape picker",
+                  result,
+                );
+              }
             }
           },
+          menu,
+        );
+
+        // 4. Clone Shape (Menu)
+        addRobustButton(
+          "be-shape-clone",
+          "📋",
+          "Clone Shape",
+          () => {
+            const wrapper = section.closest(".be-shape-wrapper");
+            if (wrapper) {
+              const clone = wrapper.cloneNode(true);
+              // Update ID to avoid duplicates
+              const newId = `shape-clone-${Date.now()}`;
+              clone.id = newId;
+              const innerShape = clone.querySelector(".be-shape-container");
+              if (innerShape) innerShape.id = `inner-${newId}`;
+
+              // Offset position slightly
+              const top = parseFloat(wrapper.style.top || 0);
+              const left = parseFloat(wrapper.style.left || 0);
+              clone.style.top = `${top + 20}px`;
+              clone.style.left = `${left + 20}px`;
+
+              wrapper.parentNode.appendChild(clone);
+              injectCloneButtons(clone);
+              refreshLayers();
+              showFeedback("Shape cloned");
+            }
+          },
+          menu,
         );
       }
     });
   }
+
   /**
    * Applies font size and proportional scale variable to a section wrapper.
    */
@@ -8331,11 +8432,7 @@ Licensed under Blue Oak Model License 1.0.0
   function injectCompactStyles() {
     if (document.getElementById("ddb-print-compact-style")) return;
 
-    const s = window.DomManager.getInstance().selectors;
-
     // Ensure all keys exist to prevent template error if fallback was partial
-    const c = s.COMPACT;
-
     const style = document.createElement("style");
     style.id = "ddb-print-compact-style";
     style.textContent = `
@@ -8343,71 +8440,70 @@ Licensed under Blue Oak Model License 1.0.0
             --reduce-height-by: 0px;
             --reduce-width-by: 0px;
         }
-        .print-section-container.be-compact-mode ${c.TABLE_HEADER},
-        .print-section-container.be-compact-mode ${c.GENERIC_HEADER},
-         {
+        .print-section-container.be-compact-mode [class^="styles_tableHeader__"],
+        .print-section-container.be-compact-mode [class$="__header"] {
             margin-top: 10px !important;
             margin-bottom: 5px !important;
             padding-bottom: 2px !important;
             border-bottom: 1px solid #ccc !important;
         }
-        .print-section-container.be-compact-mode ${c.GENERIC_HEADING} {
+        .print-section-container.be-compact-mode [class$="__heading"] {
             margin: 0px !important;
         }
-        .print-section-container.be-compact-mode ${c.GENERIC_ROW} {
+        .print-section-container.be-compact-mode [class$="-row"] {
             padding: 2px 0px !important;
         }
-        .print-section-container.be-compact-mode ${c.ROW_HEADER} ${c.PRIMARY},
-        .print-section-container.be-compact-mode ${c.GENERIC_ROW} ${c.ROW_PRIMARY} {
+        .print-section-container.be-compact-mode [class$="__row-header"] [class$="--primary"],
+        .print-section-container.be-compact-mode [class$="-row"] [class$="-row__primary"] {
             max-width: 80px !important;
         }
-        .print-section-container.be-compact-mode ${c.GENERIC_CONTENT} > div {
+        .print-section-container.be-compact-mode [class$="-content"] > div {
             padding: 0 !important;
             min-height: auto !important;
             border-bottom: 1px dashed #eee !important;
         }
         
         /* Hide or shrink icons */
-        .print-section-container.be-compact-mode ${c.ICON_ATTACK},
-        .print-section-container.be-compact-mode ${c.ICON_RANGE},
-        .print-section-container.be-compact-mode ${c.ICON_CAST_TIME},
-        .print-section-container.be-compact-mode ${c.ICON_ATTACK},
-        .print-section-container.be-compact-mode ${c.ICON_DAMAGE}{
+        .print-section-container.be-compact-mode [class$="__attack-save-icon"],
+        .print-section-container.be-compact-mode [class$="__range-icon"],
+        .print-section-container.be-compact-mode [class$="__casting-time-icon"],
+        .print-section-container.be-compact-mode [class$="__attack-save-icon"],
+        .print-section-container.be-compact-mode [class$="__damage-effect-icon"]{
             transform: scale(0.8);
             margin: 0 !important;
         }
         
-        .print-section-container.be-compact-mode ${c.ICON_FILE} {
+        .print-section-container.be-compact-mode .ddbc-file-icon {
             width: 16px !important;
             height: 16px !important;
         }
         
         /* Hide previews for extras */
-        .print-section-container.be-compact-mode ${s.EXTRAS.CONTAINER} ${c.PREVIEW},
-        .print-section-container.be-compact-mode ${s.EXTRAS.CONTAINER} ${c.PREVIEW_ALT} {
+        .print-section-container.be-compact-mode .ct-extras [class$="--preview"],
+        .print-section-container.be-compact-mode .ct-extras [class$="__preview"] {
             display: none !important;
         }
 
         /* Tighten text */
-        .print-section-container.be-compact-mode ${c.LABEL},
-        .print-section-container.be-compact-mode ${c.GENERIC_HEADER},
-        .print-section-container.be-compact-mode ${c.NOTES} {
+        .print-section-container.be-compact-mode [class$="__label"],
+        .print-section-container.be-compact-mode [class$="__header"],
+        .print-section-container.be-compact-mode [class$="__notes"] {
             font-size: 11px !important;
             line-height: 1.2 !important;
         }
         
-        .print-section-container.be-compact-mode ${c.ACTIVATION},
-        .print-section-container.be-compact-mode ${c.RANGE},
-        .print-section-container.be-compact-mode ${c.HIT_DC},
-        .print-section-container.be-compact-mode ${c.EFFECT} {
+        .print-section-container.be-compact-mode [class$="__activation"],
+        .print-section-container.be-compact-mode [class$="__range"],
+        .print-section-container.be-compact-mode [class$="__hit-dc"],
+        .print-section-container.be-compact-mode [class$="__effect"] {
             font-size: 11px !important;
             padding: 0 2px !important;
             vertical-align: middle !important;
         }
 
         /* Buttons (Cast, At Will, etc) */
-        .print-section-container.be-compact-mode ${c.BUTTON_CONTAINER},
-        .print-section-container.be-compact-mode ${s.CORE.BUTTON} {
+        .print-section-container.be-compact-mode button[class$="__container"],
+        .print-section-container.be-compact-mode .ct-button {
             height: 20px !important;
             line-height: 20px !important;
             padding: 0!important;
@@ -8416,32 +8512,32 @@ Licensed under Blue Oak Model License 1.0.0
         }
 
         /* Slots Checkboxes - Align to immediate left of "SLOTS" label if possible, or just left align container */
-        .print-section-container.be-compact-mode ${c.SLOTS} {
+        .print-section-container.be-compact-mode [class$="__slots"] {
             margin-left: 10px !important;
             margin-right: auto !important; /* Push to left */
             transform: scale(0.9);
             transform-origin: left center;
         }
         
-        .print-section-container.be-compact-mode ${c.HEADER_CONTENT} {
+        .print-section-container.be-compact-mode [class$="__header-content"] {
             flex: 0 0 auto !important; /* Stop taking full width */
             margin-right: 10px !important;
         }
         
-        .print-section-container.be-compact-mode ${c.GENERIC_HEADER} {
+        .print-section-container.be-compact-mode [class$="__header"] {
             justify-content: flex-start !important; /* Align content to start */
         }
 
         /* General width reductions for columns */
-        .print-section-container.be-compact-mode ${c.ACTION},
-        .print-section-container.be-compact-mode ${c.DISTANCE},
-        .print-section-container.be-compact-mode ${c.META} {
+        .print-section-container.be-compact-mode [class$="__action"],
+        .print-section-container.be-compact-mode [class$="__distance"],
+        .print-section-container.be-compact-mode [class$="__meta"] {
             width: auto !important;
             max-width: none !important;
         }
 
         /* Spell Details Trigger Button */
-        ${s.SPELLS.ROW} {
+        .ct-spells-spell {
             position: relative;
         }
         .be-spell-details-button {
@@ -8460,7 +8556,7 @@ Licensed under Blue Oak Model License 1.0.0
             z-index: 100;
             box-shadow: 0 2px 5px rgba(0,0,0,0.5);
         }
-        ${s.SPELLS.ROW}:hover .be-spell-details-button {
+        .ct-spells-spell:hover .be-spell-details-button {
             display: block;
         }
         .be-spell-details-button:hover {
@@ -8629,7 +8725,6 @@ Licensed under Blue Oak Model License 1.0.0
     injectCloneButtons();
     flagExtractableElements();
     initDragAndDrop();
-    initHoverHighlights();
     if (window.injectDnDStyles) {
       window.injectDnDStyles();
       safeLog("log", "[DDB Print] DnD Styles Injected");
