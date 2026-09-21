@@ -18,7 +18,7 @@ Modernized and restored for D&D Beyond 2026 site changes. This extension helps y
 
 ## Development Visualization
 
-<video src="https://github.com/itsdarklikehell/beyond-print-enhancer/assets/example.com/123456/gource.mp4" controls width="100%"></video>
+<video src="https://raw.githubusercontent.com/itsdarklikehell/beyond-print-enhancer/master/gource.mp4" controls width="100%"></video>
 
 *Gource visualization showing the repository's commit history. See the [Gource workflow](.github/workflows/gource.yml) for details.*
 ## Try the Chrome Extension Directly
