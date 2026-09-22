@@ -1,6 +1,6 @@
 {
   "name": "Beyond Print Enhancer",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "manifest_version": 3,
   "description": "Improves D&D Beyond's character sheet printing",
   "homepage_url": "https://github.com/luiscla27/beyond-print-enhancer",
@@ -11,11 +11,14 @@
     "declarativeContent",
     "activeTab",
     "scripting",
-    "contextMenus"
+    "contextMenus",
+    "storage"
   ],
   "host_permissions": [
     "https://www.dndbeyond.com/characters/*",
-    "https://character-service.dndbeyond.com/character/v5/character/*"
+    "https://character-service.dndbeyond.com/character/v5/character/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*"
   ],
   "background": {
     "service_worker": "js/background.js"

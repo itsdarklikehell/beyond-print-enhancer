@@ -71,6 +71,19 @@ function isElementLocked(el) {
 }
 
 /**
+ * The wrapper's own centred nine-dot MOVE handle (ISSUE_drag_and_drop.md).
+ * @param {EventTarget|null} target
+ * @returns {boolean}
+ */
+function isDragHandle(target) {
+  return Boolean(
+    target &&
+      typeof target.closest === 'function' &&
+      target.closest('.be-drag-handle'),
+  );
+}
+
+/**
  * True when the pointer target is interactive content that must never arm a
  * drag: the section action bar and native controls/links (spec.md I-1).
  * @param {EventTarget|null} target
@@ -78,6 +91,14 @@ function isElementLocked(el) {
  */
 function isInteractiveTarget(target) {
   if (!target || typeof target.closest !== 'function') return true;
+  // THE ONE EXCEPTION, ASSERTED FIRST (ISSUE_drag_and_drop.md): the centred
+  // nine-dot handle is a <button> that sits inside a wrapper, and every rule
+  // below would exempt it (`button`, and `.be-section-actions` once the
+  // section bars became pointer-transparent at rest). It is the ONLY thing on
+  // a section the user is meant to grab, so the exemption is checked BEFORE
+  // them rather than added to their selector list — a `:not()` on the broad
+  // `button` term would be one more place the same fact has to be spelled out.
+  if (isDragHandle(target)) return false;
   return Boolean(
     target.closest(
       // AC-4/U-6 (ui_ux_review_20260910): the rotation and resize handles are
@@ -90,9 +111,500 @@ function isInteractiveTarget(target) {
   );
 }
 
+/**
+ * THE CENTRED NINE-DOT MOVE HANDLE (ISSUE_drag_and_drop.md).
+ *
+ * WHAT CHANGED: the green `drop-shadow` that used to appear over a hovered
+ * section ("Theres a 'green' shadow filter displayed when hovering a section
+ * thats allowed to be dragged … The UX of that is extremely bad") is gone, and
+ * the affordance is now a handle with NINE dots, sitting at the CENTRE of the
+ * section, from which the section is dragged.
+ *
+ * WHY IT LIVES IN THIS MODULE: `dnd.js` owns the drag gesture, so it owns the
+ * thing you grab — one owner for the node, its cursor, its reveal and its
+ * exemption from the interactive-target rule. It is a DIRECT CHILD of the
+ * wrapper (a sibling of `.print-section-container`), so it is centred on the
+ * wrapper box itself rather than on whatever content a section happens to hold,
+ * and no section re-render (compact / border / responsive scale all paint INTO
+ * `.print-section-container`) can remove it.
+ *
+ * WHY A <button>: keyboard/AT reachable (it is focusable, and
+ * `:focus-within` reveals it exactly like `:hover`), and the product's whole
+ * tiered-control convention (track ornament_symmetry_20260910, spec.md AC-4) is
+ * that a clickable control IS a button, so the sheet's own `button` element
+ * rules — including "never a native drag source" and the focus-ring recipe —
+ * apply to it for free rather than needing a third copy.
+ *
+ * WHY IT IS EXEMPT, NOT ABSENT FROM THE RULES: `isInteractiveTarget` would
+ * otherwise refuse it twice over (`button`, and `.be-section-actions` once the
+ * action bar became pointer-transparent at rest), and `isDragHandle` is checked
+ * FIRST so there is exactly one place that states which control is the grab
+ * target.
+ *
+ * WHY NO CLICK HANDLER: the drag engine starts on `pointerdown` and commits
+ * after 4px, so the click that follows a plain press-release (click-to-select,
+ * click-to-front) must still reach the wrapper untouched — the same reason
+ * `handlePointerDown` deliberately does not `preventDefault`. This is NOT HTML5
+ * drag-and-drop: wrappers are not native drag sources (the pointer engine's
+ * AC-1, pinned by the `draggable="true"` query in
+ * test/browser_e2e/drag_glow_layers.spec.js), and `initDragAndDrop` cancels
+ * stray `dragstart` events.
+ *
+ * @param {HTMLElement} wrapper
+ * @returns {HTMLElement|null} the wrapper's handle
+ */
+function ensureDragHandle(wrapper) {
+  if (!wrapper || typeof wrapper.querySelector !== 'function') return null;
+  let handle = wrapper.querySelector(':scope > .be-drag-handle');
+  if (!handle) {
+    handle = document.createElement('button');
+    handle.type = 'button';
+    handle.className = 'be-drag-handle';
+    handle.title = 'Drag to move this section';
+    handle.setAttribute('aria-label', handle.title);
+    // THE GRID OF NINE. `Icons.svg` is the 16px single-weight set every other
+    // in-sheet control uses; `gripVertical` is its nine-dot entry (filled
+    // circles, stroke-free, so a 12px render reads as dots and not rings). It
+    // is built through the SAME primitive instead of a hand-written <svg>, and
+    // fails open to the U+22EE9 character when the icon module has not been
+    // evaluated in this host.
+    if (
+      typeof window !== 'undefined' &&
+      window.Icons &&
+      typeof window.Icons.svg === 'function'
+    ) {
+      handle.innerHTML = window.Icons.svg('gripVertical', 12);
+    } else {
+      handle.textContent = '\u22EE9';
+    }
+    wrapper.appendChild(handle);
+  }
+  return handle;
+}
+
+/**
+ * Give every wrapper the sheet currently holds its handle. The boot pass:
+ * sections are (re)built after `initDragAndDrop()` in some flows and a
+ * MutationObserver covers the rest (see `watchDragHandles`), so this is
+ * deliberately idempotent.
+ * @returns {number} how many wrappers were visited
+ */
+function syncDragHandles() {
+  if (typeof document === 'undefined') return 0;
+  const wrappers = document.querySelectorAll('.be-section-wrapper');
+  Array.prototype.forEach.call(wrappers, ensureDragHandle);
+  measureGripBands();
+  return wrappers.length;
+}
+
+// ---------------------------------------------------------------------------
+// GRIP GEOMETRY — the trimmed hit area and the short-section nudge
+// (temp/archived/ISSUE_grip_box_overlaps_actions_bar_on_short_sections_20260914.md)
+// ---------------------------------------------------------------------------
+
+/** The plate's resting size, as declared in `injectDnDStyles` below. */
+const GRIP_PLATE_W = 34;
+const GRIP_PLATE_H = 26;
+/** The plate's size ON A BANDED WRAPPER: the 12px `gripVertical` glyph plus a 3px
+ *  ring. `Icons.svg('gripVertical', 12)` (js/dnd.js `ensureDragHandle`, js/icons.js:
+ *  dots at cx 5/8/11, cy 4/8/12, r 1 in a 16-unit viewBox) paints 10x10 units of ink
+ *  in a 12x12 box, so 18x18 contains the visible target exactly — the pointer may not
+ *  reach further than the user can see. It is BOTH the trimmed hit area and the plate:
+ *  shrinking the plate to the dots is what trims the hits, because CSS cannot trim a
+ *  button's hit area without also trimming its paint (see the ruled-out forms below).
+ *  18 also keeps the grip above the floor the browser suite calls "a real hit target,
+ *  not a speck" (`width >= 18`). */
+const GRIP_DOT_PLATE_PX = 18;
+/** How far a banded grip's box must clear a control's centre, in px. */
+const GRIP_BAND_MIN_CLEARANCE = 2;
+
+function rectContainsPoint(r, x, y) {
+  return x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h;
+}
+
+function rectOverlapArea(a, b) {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/**
+ * Where the grip may sit when the plate centred on its wrapper swallows a control.
+ *
+ * WHY A MEASUREMENT AND NOT A CONSTANT: the two quantities that decide this live in
+ * different files and both move — the bar is anchored at `top: 8px; left: 8px` with
+ * 39x32 buttons and an 8px gap (js/print_styles.js, built by
+ * `getOrCreateActionContainer` in js/main.js), and the wrapper's own height is
+ * whatever the sheet made it, then changes under responsive scaling, resize, the
+ * compact/border paints and the sheet zoom. The issue's own estimate — collision "for
+ * wrapper heights up to ~2*(8+32) = 80px" — is exactly the kind of rule that goes
+ * quietly false: a 104px section with a two-row bar (buttons at y 8..40 and 48..80)
+ * PASSES an 80px height test and still loses both rows' centres to the plate, while a
+ * 62px section in a narrow column loses only the button whose centre falls inside the
+ * plate's x window. So the grip is placed from the boxes the wrapper really has, every
+ * frame they change.
+ *
+ * WHAT COUNTS AS A LOSS, and why it is the centre and not the box: the defect is
+ * "whoever is stacked on top takes the other one's centre pixel". A grip covering 4px of
+ * a button's bottom edge leaves that control reachable and legible; a grip covering its
+ * CENTRE silently steals the pixel every user aims at. So swallowing a centre is the
+ * HARD constraint and covering an edge is only a tie-break. The preference order, which
+ * is the whole judgement, is (1) no control loses its centre, (2) the smallest step away
+ * from the wrapper's middle, (3) the least box area covered. (2) before (3) on purpose:
+ * the promise is a CENTRED grip, so the price of breaking it is measured in px of shift
+ * and must be minimised — the issue itself priced the nudge as "changes 'centred' by
+ * ~10px". On the measured section that ordering costs the grip 4px, not 22.
+ *
+ * THE CANDIDATES are the centred position plus, for each control, the two clearance
+ * positions whose box edge just misses that control's centre — above and below, since
+ * the plate is horizontally centred and the bar hangs off the top-left. Each is then
+ * CLAMPED so the box stays inside the wrapper. That clamp is a measured correction: the
+ * first probe pushed the plate to `top: calc(50% + 9px)` on a 62px wrapper and it landed
+ * 2px OUTSIDE the bottom edge, where the sheet clips the affordance to a sliver — a
+ * half-painted grip is worse than the collision this function exists to fix.
+ *
+ * A control is anything that deliberately NEVER arms a drag: the action bar's BUTTONS
+ * (one per control — the bar is a flex row of several and its own box would report a
+ * collision its uncovered buttons do not have), the rotation handle and the resize
+ * handle, i.e. exactly the exemptions in `isInteractiveTarget` above. Plain section
+ * CONTENT is not a control: it stays reachable wherever the trimmed plate is not, and a
+ * document-sized block of text is not something an 18x18 target competes with.
+ *
+ * @param {{w:number, h:number, controls?:Array<{x:number,y:number,w:number,h:number}>}} boxes
+ *        wrapper size and control rects, both in the WRAPPER's own client coordinates
+ * @returns {{shift:number, width:number, height:number}|null} the plate to band the grip
+ *          into — its size and how far it steps from the wrapper's centre; null leaves
+ *          the grip exactly as it shipped
+ */
+function gripBandFor(boxes) {
+  const H = Number(boxes && boxes.h);
+  const W = Number(boxes && boxes.w);
+  if (!(H > 0) || !(W > 0)) return null;
+  const controls = ((boxes && boxes.controls) || []).filter(
+    (c) => c && [c.x, c.y, c.w, c.h].every(Number.isFinite) && c.w > 0 && c.h > 0,
+  );
+  if (!controls.length) return null;
+
+  const x = (W - GRIP_PLATE_W) / 2;
+  const centred = { x, y: (H - GRIP_PLATE_H) / 2, w: GRIP_PLATE_W, h: GRIP_PLATE_H };
+  const swallows = (box) =>
+    controls.filter((c) =>
+      rectContainsPoint(box, c.x + c.w / 2, c.y + c.h / 2),
+    );
+  if (!swallows(centred).length) return null; // no centre at stake: leave it centred
+
+  const half = GRIP_DOT_PLATE_PX / 2;
+  const lo = half;
+  const hi = H - half;
+  if (hi < lo) return null; // shorter than the trimmed plate: nothing fits, keep it centred
+  const centreY = H / 2;
+  const candidates = [centreY];
+  for (const c of controls) {
+    const cy = c.y + c.h / 2;
+    candidates.push(cy - GRIP_BAND_MIN_CLEARANCE - half);
+    candidates.push(cy + GRIP_BAND_MIN_CLEARANCE + half);
+  }
+  // The trimmed plate is CENTRED on both axes by the same `inset:0; margin:auto`
+  // that centres the shipped one, so its x is not the centred plate's x.
+  const trimmedX = (W - GRIP_DOT_PLATE_PX) / 2;
+  let best = null;
+  for (const raw of candidates) {
+    const cy = Math.min(hi, Math.max(lo, raw));
+    const box = { x: trimmedX, y: cy - half, w: GRIP_DOT_PLATE_PX, h: GRIP_DOT_PLATE_PX };
+    const covered = controls.reduce((s, c) => s + rectOverlapArea(box, c), 0);
+    // THE WEIGHTS ARE THE CONTRACT: no centre (hard), then the smallest step away
+    // from the middle (the promise's price), then the least box area covered.
+    const score =
+      swallows(box).length * 1e12 + Math.abs(cy - centreY) * 1e6 + covered;
+    if (!best || score < best.score) best = { cy, score };
+  }
+  return {
+    width: GRIP_DOT_PLATE_PX,
+    height: GRIP_DOT_PLATE_PX,
+    // Displacement from where the centred plate already sits, NOT an absolute
+    // `top`: the stylesheet cannot express an absolute one (see the `translate`
+    // rule), and carrying a delta keeps it correct whatever centring rule applies.
+    shift: +(best.cy - centreY).toFixed(2),
+  };
+}
+
+/**
+ * Place every wrapper's grip from the boxes it actually has to share.
+ *
+ * The three custom properties are written on the HANDLE, and the stylesheet declares
+ * them with the shipped values as fallbacks — so a wrapper this pass never visited (or a
+ * host where `measureGripBands` never ran) keeps the centred 34x26 plate exactly as it
+ * shipped. There is deliberately NO state class: the properties are the state, and a
+ * second marker could only drift from them.
+ *
+ * WHY AN OBSERVER AND NOT A CALL AT THE MUTATION SITES: a grip's free space depends on
+ * the wrapper's height AND on the bar's buttons, and those change from resize,
+ * responsive scaling, the compact/border paints, font size, zoom and layout apply — a
+ * dozen call sites, the same argument `watchDragHandles` makes for the node itself. The
+ * subscription is taken out on every box this pass READS (see `watchGripBand`), which is
+ * the only set of boxes whose notification actually means the placement went stale.
+ *
+ * THE PASS IS COALESCED INTO A FRAME, and that is load-bearing rather than tidy:
+ * `fitContainer` (js/main.js responsive scaling) sets a transform on the section's
+ * inner, which changes the descendants' rects, which re-fires the observer that called
+ * it. Measuring synchronously inside the callback is the classic "Resize observer loop"
+ * Chromium reports (the feature's own header documents how hard that was escaped
+ * there); one frame later the sheet has settled, and if it has not, the next frame
+ * re-runs the pass — so the placement converges instead of screaming.
+ *
+ * @param {Node} [root] subtree to walk (defaults to the document)
+ * @returns {number} how many wrappers ended up banded
+ */
+let gripBandFrame = null;
+const gripBandRoots = new Set(); // null in the set means "the whole document"
+function scheduleGripBands(root) {
+  gripBandRoots.add(root || null);
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    return flushGripBands();
+  }
+  if (gripBandFrame !== null) return 0;
+  gripBandFrame = window.requestAnimationFrame(flushGripBands);
+  return 0;
+}
+
+function flushGripBands() {
+  gripBandFrame = null;
+  const roots = Array.from(gripBandRoots);
+  gripBandRoots.clear();
+  if (roots.some((r) => r === null)) return measureGripBands();
+  let banded = 0;
+  for (const root of roots) banded += measureGripBands(root);
+  return banded;
+}
+
+function measureGripBands(root) {
+  if (typeof document === 'undefined') return 0;
+  // A committed drag moves the source wrapper, dims it, and hides its handle via the
+  // held-state rule; re-placing grips mid-drag would also fight the drag for frames.
+  if (document.body && document.body.classList.contains('be-dragging')) return 0;
+  const scope = root || document;
+  if (!scope.querySelectorAll) return 0;
+  const wrappers = Array.prototype.slice.call(
+    scope.querySelectorAll('.be-section-wrapper'),
+  );
+  // A wrapper is not its own descendant, so when a MutationObserver record hands us the
+  // WRAPPER that changed, the subtree query alone would name only its children.
+  if (scope.classList && scope.classList.contains('be-section-wrapper')) {
+    wrappers.unshift(scope);
+  }
+  let banded = 0;
+  // Every box THIS pass reads, so the pass can also stop watching what it no longer
+  // reads (see `watchGripBand` / `reconcileGripBandWatch`).
+  const read = new Set();
+  for (const wrapper of wrappers) {
+    if (wrapper.isConnected === false) continue;
+    const handle = ensureDragHandle(wrapper);
+    if (!handle) continue;
+    const wr = wrapper.getBoundingClientRect();
+    watchGripBand(wrapper);
+    read.add(wrapper);
+    const controls = [];
+    for (const node of wrapper.querySelectorAll(
+      '.be-section-actions button, .be-rotation-handle, .print-section-resize-handle',
+    )) {
+      // EVERY control this selector matches is watched, visible or not, and the reason is
+      // the lock toggle: `.be-layer-locked .be-rotation-handle` and friends hide chrome
+      // `display:none` (js/print_styles.js, and
+      // ISSUE_lock_rule_hides_all_resize_rotate_handles_20260911.md), so a control that
+      // was hidden during this pass has no box to change later — an observer subscribed
+      // only to what it measured would never be told when unlocking brings that handle
+      // BACK over the wrapper's centre. A `display:none` element that starts being
+      // rendered IS a resize notification, so watching the hidden one is what makes the
+      // pass hear about it. The lock's own opacity change on the wrapper is not.
+      watchGripBand(node);
+      read.add(node);
+      // Locked chrome hides its handles display-only: an invisible control is not one the
+      // user can aim at, so it is not a REASON TO MOVE THE GRIP either. Honoured as the
+      // cascade states it, not re-derived.
+      const cs = getComputedStyle(node);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') {
+        continue;
+      }
+      const r = node.getBoundingClientRect();
+      controls.push({ x: r.left - wr.left, y: r.top - wr.top, w: r.width, h: r.height });
+    }
+    const band = gripBandFor({ w: wr.width, h: wr.height, controls });
+    if (band) {
+      banded += 1;
+      handle.style.setProperty('--be-grip-w', band.width + 'px');
+      handle.style.setProperty('--be-grip-h', band.height + 'px');
+      handle.style.setProperty('--be-grip-shift', band.shift + 'px');
+    } else {
+      handle.style.removeProperty('--be-grip-w');
+      handle.style.removeProperty('--be-grip-h');
+      handle.style.removeProperty('--be-grip-shift');
+    }
+  }
+  reconcileGripBandWatch(read, !root);
+  return banded;
+}
+
+let gripBandObserver = null;
+/** The nodes handed to that observer. The observer is only one side of a subscription:
+ *  this Set is what lets a later pass know what it already holds and release it — an
+ *  element stays in a `ResizeObserver` until somebody calls `unobserve`, no matter what
+ *  happened to it in the document (see `reconcileGripBandWatch`). */
+const gripBandWatched = new Set();
+
+/** The ONE ResizeObserver the placement pass subscribes its boxes to, or null in a host
+ *  without one (a bare unit harness) — same failure shape as `watchDragHandles`.
+ *
+ *  WHY WRAPPERS AND CONTROLS AND NOT `document.body` OR THE LAYOUT ROOT: a
+ *  ResizeObserver reports the boxes of the elements YOU OBSERVE, nothing else. The
+ *  layout root's size does not change when one section is resized, when its text
+ *  reflows, or when its action bar wraps to a second row — and the bar is absolutely
+ *  positioned, so a bar that grows does not even grow its wrapper. Those are precisely
+ *  the events the placement depends on, so EVERY BOX THE PASS READS IS A BOX THE PASS
+ *  OBSERVES. */
+function ensureGripBandObserver() {
+  if (gripBandObserver || typeof ResizeObserver !== 'function') return gripBandObserver;
+  try {
+    gripBandObserver = new ResizeObserver(() => scheduleGripBands());
+    // A fresh observer has no targets: whatever the Set remembers from an earlier one
+    // (a host that tore this down, a test harness) would never be released by `unobserve`.
+    gripBandWatched.clear();
+  } catch {
+    gripBandObserver = null;
+  }
+  return gripBandObserver;
+}
+
+function watchGripBand(node) {
+  const ro = ensureGripBandObserver();
+  if (!ro || !node) return;
+  if (gripBandWatched.has(node)) return; // already subscribed; no second observe call
+  try {
+    ro.observe(node, { box: 'border-box' });
+    gripBandWatched.add(node);
+  } catch {
+    /* a harness whose observer cannot take this target */
+  }
+}
+
+/**
+ * Stop watching the boxes this pass did not read.
+ *
+ * A `ResizeObserver` holds its targets STRONGLY: a subscription does not expire when the
+ * element leaves the document, it pins the element. Without this release, every section
+ * the sheet ever built — and every button in every action bar it ever repainted, since
+ * `main.js` rebuilds those — stayed reachable for the lifetime of the tab, in proportion
+ * to how much the user edited. It is also the difference between "watch what the
+ * placement reads" and "watch everything the sheet ever had", the same argument
+ * `forgetContainer` makes for the scaling observer in js/main.js.
+ *
+ * @param {Set<Node>} read        every box the current pass measured
+ * @param {boolean} exhaustive    true when the pass walked the WHOLE document, so anything
+ *        not in `read` is stale; false for a scoped pass, which may only release what has
+ *        provably left the document — a scoped walk cannot judge the rest of the sheet.
+ * @returns {number} how many nodes were released
+ */
+function reconcileGripBandWatch(read, exhaustive) {
+  const ro = gripBandObserver;
+  if (!ro) return 0;
+  let released = 0;
+  for (const node of Array.from(gripBandWatched)) {
+    if (read.has(node)) continue;
+    if (!exhaustive && node.isConnected !== false) continue;
+    gripBandWatched.delete(node);
+    try {
+      ro.unobserve(node);
+      released += 1;
+    } catch {
+      /* a mock observer without unobserve: dropping our own reference still ends the leak */
+    }
+  }
+  return released;
+}
+
+/**
+ * Keep the handles in the document as sections come and go.
+ *
+ * WHY AN OBSERVER AND NOT A CALL IN THE SECTION FACTORY: wrappers are created
+ * in SEVEN places (the extraction pass, `createShape`, clones, skill split,
+ * ability/extraction loads, spell cards, layout apply) and every one of them
+ * goes through an insertion into the sheet, so one observer covers all seven
+ * where seven call sites would each be a new thing to forget. Records are
+ * coalesced into a microtask flush, and only the wrapper an added/removed node
+ * belongs to is visited — the observer never walks the document.
+ *
+ * @param {Node} [target] what to observe (defaults to the document element)
+ * @returns {MutationObserver|null}
+ */
+function watchDragHandles(target) {
+  if (typeof MutationObserver !== 'function') return null;
+  const host =
+    target ||
+    (typeof document !== 'undefined' ? document.documentElement : null);
+  if (!host || typeof host.addEventListener !== 'function') return null;
+
+  const pending = new Set();
+  let flushQueued = false;
+
+  const collect = (node) => {
+    if (!node || node.nodeType !== 1) return;
+    if (node.classList && node.classList.contains('be-section-wrapper')) {
+      pending.add(node);
+    }
+    if (node.closest && node.closest('.be-section-wrapper')) {
+      pending.add(node.closest('.be-section-wrapper'));
+    }
+  };
+
+  const flush = () => {
+    flushQueued = false;
+    for (const wrapper of pending) {
+      if (wrapper.isConnected === false) continue; // removed again before we looked
+      ensureDragHandle(wrapper);
+      // The same records that say "a wrapper gained or lost nodes" are what the grip's
+      // PLACEMENT depends on: the action bar's buttons are built and rebuilt by the
+      // section paints, and a control appearing over a wrapper's centre is exactly the
+      // event that should re-place the grip. Scoped to the wrapper, coalesced.
+      scheduleGripBands(wrapper);
+    }
+    pending.clear();
+  };
+
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      record.addedNodes && record.addedNodes.forEach(collect);
+      // A REMOVED wrapper needs nothing: its handle went with it. A removed
+      // HANDLE is what this arm exists for — a section rebuilt in place keeps
+      // its wrapper, so the added arm above would never see it again.
+      record.removedNodes &&
+        record.removedNodes.forEach((node) => {
+          if (
+            node &&
+            node.nodeType === 1 &&
+            node.classList &&
+            node.classList.contains('be-drag-handle') &&
+            node.parentNode
+          ) {
+            pending.add(node.parentNode);
+          }
+        });
+    }
+    if (pending.size && !flushQueued) {
+      flushQueued = true;
+      Promise.resolve().then(flush).catch(() => {
+        flushQueued = false;
+      });
+    }
+  });
+
+  observer.observe(host, { childList: true, subtree: true });
+  return observer;
+}
+
+
 // ---------------------------------------------------------------------------
 // Phase 2 helpers: grid snap + alignment guides (pure, unit-tested)
 // ---------------------------------------------------------------------------
+
 
 /**
  * Snap a container-space coordinate to the 16px grid.
@@ -907,6 +1419,12 @@ function cleanupDrag() {
   document.body.classList.remove('be-dragging');
   document.body.style.userSelect = '';
   document.body.style.webkitUserSelect = '';
+  // The drop is where a wrapper's geometry actually changes, and `measureGripBands`
+  // refuses to run while `body.be-dragging` is up (see the guard there). This is the
+  // one line that hands the placement back; a frame later, so the drop's own writes
+  // have landed. Nothing else re-arms it: a ResizeObserver notification that arrives
+  // during a drag is deliberately swallowed, and this is the drain.
+  scheduleGripBands();
 }
 
 function abortDrag() {
@@ -992,6 +1510,13 @@ function initDragAndDrop() {
     }
   });
 
+  // THE CENTRED HANDLE (ISSUE_drag_and_drop.md): the sheet may already be
+  // populated when the engine boots, so give every existing wrapper its handle
+  // now, then keep it true as sections come and go. Both are guarded so a host
+  // without a live DOM (unit harness) still gets a working engine.
+  syncDragHandles();
+  watchDragHandles();
+
   initialized = true;
   safeLog('log', '[DDB Print] Pointer Drag Engine Initialized on:', container.id);
 }
@@ -1054,6 +1579,245 @@ function injectDnDStyles() {
           filter: none !important;
           -webkit-filter: none !important;
       }
+
+      /* =====================================================================
+         THE CENTRED NINE-DOT MOVE HANDLE (ISSUE_drag_and_drop.md)
+         =====================================================================
+         The owner's words: "There's a 'green' shadow filter displayed when
+         hovering a section that's allowed to be dragged and dropped. The UX of
+         that is extremely bad, let's replace it for a 'drag area', a '9 points
+         button' should be displayed on the center on any section on the ACTIVE
+         layer, and the user should be able to drag the section from there."
+
+         So the glow is gone and this is the affordance instead. Three rules
+         carry that sentence, and each is stated in ONE place:
+
+           REST        invisible AND untouchable. 'visibility' (not 'opacity')
+                       because it takes the node out of the hit-testing AND the
+                       accessibility tree at once, so a hidden handle cannot be
+                       tabbed to, clicked through, or read out — and unlike
+                       'display:none' it still animates, so the reveal is a fade.
+                       'opacity' alone would have left a 26px dead square in the
+                       middle of every section swallowing clicks on the content
+                       beneath it (the exact class of bug the action bars already
+                       hit: js/main.js:2513 pins 'pointerEvents = "all"' inline).
+           REVEAL      only inside '.be-active-layer', on hover AND on
+                       focus-within. Same scope the action bars now use
+                       (js/print_styles.js:1060) — one definition of "the layer
+                       you're working on", two consumers.
+           NEVER       locked layer, locked body-mode, print. A locked section
+                       shows 'cursor: not-allowed' above; a grab handle there
+                       would contradict it. */
+      .be-drag-handle {
+          position: absolute !important;
+          /* THE CENTRE of the WRAPPER box. Being a direct child of the wrapper
+             (not of .print-section-container) is what makes "centred" mean the
+             section rather than whatever content it happens to hold, and
+             margin:auto + inset:0 does it without knowing either size — no
+             transform is needed to CENTRE it, which is what keeps the wrapper's own
+             transforms (responsive scaling, rotation) untouched. The one
+             displacement this handle takes is 'translate', further down. */
+          inset: 0 !important;
+          margin: auto !important;
+          /* THE GRIP'S TWO SIZES, both resolved from the wrapper's geometry. The
+             fallbacks ARE the shipped plate — a wrapper the geometry pass never
+             visited, or a host where it never ran, paints exactly what shipped
+             before temp/archived/ISSUE_grip_box_overlaps_actions_bar_on_short_sections_20260914.md. 'measureGripBands' in this file re-declares them to
+             the dots' box (GRIP_DOT_PLATE_PX) on the wrappers whose centred plate
+             would swallow another control's centre; the paired
+             '--be-grip-shift' below carries the step clear.
+
+             They are custom properties RATHER THAN a second selector on purpose. A
+             '.be-active-layer … :hover.be-grip-band .be-drag-handle' arm would
+             OUT-SPECIFY both the reveal and the held-state rules below — the held
+             state is already an exact (0,5,2) match for the reveal's (0,4,0) plus
+             'body.be-dragging', and a geometry rule that beat it would bring back the
+             shipped-handle-ghost the block at the bottom of this stylesheet exists to
+             prevent. Inherited values cannot do that damage: they set no property, so
+             they have no specificity to win with. */
+          width: var(--be-grip-w, 34px) !important;
+          height: var(--be-grip-h, 26px) !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          /* Square, not a pill: it reads as a tool handle, matching the tier
+             geometry the rest of the chrome uses. */
+          border-radius: 4px !important;
+          padding: 0 !important;
+          /* The declared size IS the rendered size. Without it the 1px border adds
+             2px to BOTH dimensions and the placement pass — which clamps the box
+             inside the wrapper and clears a control's centre by
+             GRIP_BAND_MIN_CLEARANCE — would be off by that much on any host that
+             does not happen to set border-box for us. (The demo sheet measured
+             34x26 with the border, so this pins what the page already did rather
+             than changing it.) */
+          box-sizing: border-box !important;
+          background: #0C0907 !important;
+          border: 1px solid #4A3E2B !important;
+          color: #C6A15B !important;
+          /* THE GRAB CURSOR — the sentence's "the user should be able to drag
+             the section from there". 'grab' arms, 'grabbing' is the held state
+             (the body-level rule below wins while a drag is committed). */
+          cursor: grab !important;
+          visibility: hidden !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
+          transition: opacity 0.12s ease-in-out, visibility 0.12s !important;
+          /* The handle is chrome, not sheet content: it must sit above the
+             section's own text (wrappers stack at z-index 10, action bars at 20)
+             and above the wrapper the hover raised to 700000 — hence above that.
+
+             IT MUST ALSO WIN THE PIXEL IT IS REVEALED FOR, and that ordering is the
+             whole of ISSUE_grip_covered_by_actions_bar_on_small_sections_20260914.md.
+             The action bar is built with an INLINE z-index: 1000000 (js/main.js
+             getOrCreateActionContainer, reading ACTIONS_BAR from the ONE map in
+             js/section_utils.js) and is anchored at
+             top: 8px; left: 8px with 39x32 buttons, so on a section short enough for
+             that band to reach the vertical centre the bar's buttons landed ON the
+             grip's own pixel — and they become hittable at exactly the moment the
+             grip is revealed, so the two affordances the user is shown at the same
+             instant fought over the same ~26x26px. MEASURED on the live demo sheet
+             (1920x1080, decorative layers hidden through their own control):
+             section-extra-tidbits-wrapper (151.5x62px) reported
+             BUTTON|be-select-section-button at the grip's centre — "drag from the
+             centre" silently degraded to "drag from the lower edge". 700002 < 1000000
+             is the whole cause.
+
+             THE FIX MOVED THE BAR, NOT THIS NUMBER (operator chose option 3: the bar
+             yields while the grip is revealed). js/print_styles.js drops the bar to
+             700001 on the SAME hover that reveals this handle, so the order is
+             hovered wrapper 700000 < bar 700001 < grip 700002, both controls stay
+             fully usable, and the grip never has to be pushed off centre or cover a
+             button. This file stays the single owner of the grip's level; the bar's
+             yielded level and its reason live with the bar. */
+          z-index: 700002 !important;
+          /* No box-shadow, and that is deliberate (ISSUE_shadows.md): the whole
+             complaint about the old affordance was a *shadow filter* painted over
+             the section. A drop-shadow here would re-introduce the same class of
+             artifact at the centre of the page. */
+          box-shadow: none !important;
+          filter: none !important;
+          line-height: 0 !important;
+      }
+      /* THE GRIP HAS TWO SIZES, ONE PAINT AND ONE OFFSET —
+         temp/archived/ISSUE_grip_box_overlaps_actions_bar_on_short_sections_20260914.md.
+         The user-chosen hybrid, and both halves were MEASURED BEFORE being written:
+         that ordering is the process failure the predecessor's Muse consultation
+         named (the last fix's cost was priced only after it shipped, and the operator
+         was handed "resolved" for a residual nobody had measured).
+
+         MEASURED GEOMETRY (live demo sheet, 1920x1080, decorative layers hidden
+         through their own panel control, boxes relative to the wrapper):
+           section-extra-tidbits-wrapper   wrapper 151.5 x 62
+           grip    (58.8, 18) 34 x 26   centre (75.8, 31)
+           Select  (55.0,  8) 39 x 32   centre (74.5, 24)
+         The two CENTRES are 1.3px apart across and 7px down, so the boxes share a
+         34 x 22 region — 60% of the button, its own centre included — and whoever is
+         stacked on top takes the other one's centre pixel. No stacking option can fix
+         that: hoisting the grip (option 1) and yielding the bar (option 3) leave the
+         SAME residual, which is why the predecessor shipped with it. Only geometry
+         can, so this is geometry: the plate becomes the dots' box and steps off the
+         control's centre, on the wrappers where that is actually happening
+         ('gripBandFor' in this file), and stays the shipped 34x26 centred plate
+         everywhere else.
+
+         WHY A SIZE AND AN OFFSET RATHER THAN A CLIPPED HIT AREA: CSS cannot trim a
+         button's hit box without trimming its paint. A transparent '::after' the size
+         of the dots does take hits (probed), but 'pointer-events: none' on the plate
+         lets 'elementFromPoint' land on the PLATE through the transparent overlay, and
+         the browser ratchet counts a grip grabbed when the hit resolves to the handle
+         OR a descendant of it — so trimming that way buys the bar ZERO real estate
+         while appearing to. 'clip-path' does trim honestly, but only the element's own
+         border-box (probed: a fixed-size overlay sticking outside a clipped parent
+         never won a single point outside it), i.e. it is exactly "shrink the plate".
+         So the plate shrinks, and the trim is INVISIBLE where it matters most: a 34x26
+         plate and an 18x18 one both read as a small dark rounded square behind 10x10
+         of gold dots, and a wrapper with room around its centre never gets one at all.
+
+         NO TRANSFORM ON THE WRAPPER, and one property on the handle: the wrapper's own
+         'transform' belongs to responsive scaling and rotation (js/main.js), and a grip
+         centred with 'inset:0; margin:auto' never had to touch either. A 'top' would NOT
+         have worked: with 'inset: 0' and 'margin: auto' BOTH edges are pinned, so a
+         written 'top' is split with the leftover space and lands at (top + H - h)/2
+         rather than at 'top' — measured, 'top: calc(50% + 9px)' on a 62px wrapper
+         rendered at y 38 instead of 40. The offset therefore rides on the one property
+         that is pure displacement, and it carries the plate and its paint together. */
+      .be-drag-handle {
+          translate: 0 var(--be-grip-shift, 0px) !important;
+      }
+      /* THE NINE DOTS MAY NOT OUTGROW THE TRIMMED PLATE. 'ensureDragHandle' asks for a
+         12px glyph, and a replaced element in a flex row can be grown by the layout
+         that carries it, so the ink is capped to the plate's own content box. */
+      .be-drag-handle svg {
+          display: block;
+          pointer-events: none;
+          max-width: 100% !important;
+          max-height: 100% !important;
+      }
+
+      /* REVEAL: active layer only, on hover or keyboard focus. */
+      .be-active-layer .be-section-wrapper:hover .be-drag-handle,
+      .be-active-layer .be-shape-wrapper:hover .be-drag-handle,
+      .be-active-layer .be-section-wrapper:focus-within .be-drag-handle,
+      .be-active-layer .be-shape-wrapper:focus-within .be-drag-handle {
+          visibility: visible !important;
+          opacity: 1 !important;
+          /* The one place the handle is clickable. 'auto' (not 'all'): it is not
+             a stacking-context question, and 'auto' keeps the hit-test on the
+             normal path so the pointerdown reaches the delegated drag engine. */
+          pointer-events: auto !important;
+      }
+
+      /* NEVER: locked layers and locked body modes. Listed explicitly rather
+         than left to the rest state because a locked wrapper can still be
+         :hover and still contain focus; the ':not()' form would need one guard on
+         every arm above instead of one block here. */
+      body.be-lock-sections .be-drag-handle,
+      body.be-lock-shapes .be-drag-handle,
+      .be-layer-locked .be-drag-handle {
+          visibility: hidden !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
+      }
+
+      /* HELD STATE: while a drag is committed, the handle goes away.
+         The source wrapper is STILL :hover under the pointer, so without this
+         its handle rides along in the middle of the dimmed source — one grip
+         left behind on a section that is already being carried. The cursor fact
+         is stated here too, so "grab arms / grab holds" lives in one block.
+
+         THE SELECTOR LIST IS NOT COSMETIC. The reveal rule above is
+         .be-active-layer .be-section-wrapper:hover .be-drag-handle — four
+         class-level selectors, specificity (0,4,0) — and BOTH rules are
+         !important, so a shorter held-state rule loses the cascade and the
+         handle simply stays visible: html body.be-dragging .be-drag-handle is
+         (0,2,2) and even html body.be-dragging .be-section-wrapper
+         .be-drag-handle is (0,3,2). Each arm below therefore repeats the
+         reveal rule's own class chain and ADDS body.be-dragging, giving
+         (0,5,2) — the reveal it overrides, plus one. The ghost needs no arm: it
+         is appended to document.body, so no .be-active-layer ancestor matches
+         it and the base hidden state already applies to its cloned handle. */
+      html body.be-dragging .be-active-layer .be-section-wrapper:hover .be-drag-handle,
+      html body.be-dragging .be-active-layer .be-shape-wrapper:hover .be-drag-handle,
+      html body.be-dragging .be-active-layer .be-section-wrapper:focus-within .be-drag-handle,
+      html body.be-dragging .be-active-layer .be-shape-wrapper:focus-within .be-drag-handle {
+          cursor: grabbing !important;
+          visibility: hidden !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
+      }
+
+      /* Print: never on the page. Also carried by the sheet's own print hide
+         list (js/print_styles.js) — belt and braces, because this stylesheet is
+         injected by dnd.js and a page that skips it must still not print the
+         handle. */
+      @media print {
+          .be-drag-handle {
+              display: none !important;
+              visibility: hidden !important;
+              opacity: 0 !important;
+          }
+      }
   `;
   document.head.appendChild(style);
 }
@@ -1074,6 +1838,15 @@ if (typeof module !== 'undefined' && module.exports) {
     stopAutoScroll,
     isElementLocked,
     isInteractiveTarget,
+    isDragHandle,
+    ensureDragHandle,
+    syncDragHandles,
+    gripBandFor,
+    measureGripBands,
+    GRIP_PLATE_W,
+    GRIP_PLATE_H,
+    GRIP_DOT_PLATE_PX,
+    watchDragHandles,
     snapToGrid,
     findAlignmentGuides,
     scheduleAutosave,
@@ -1084,6 +1857,13 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
   window.initDragAndDrop = initDragAndDrop;
   window.injectDnDStyles = injectDnDStyles;
+  /* The handle helpers (isDragHandle / ensureDragHandle / syncDragHandles /
+     watchDragHandles) are deliberately NOT published on `window`: the drag
+     engine consumes them itself (initDragAndDrop), the unit suite reaches them
+     through module.exports, and this module's own predicates
+     (isElementLocked, isInteractiveTarget) follow the same rule. Four
+     zero-caller globals is exactly the re-rot the dead_exports_20260910 guard
+     exists to refuse. */
   window.snapToGrid = snapToGrid;
   window.findAlignmentGuides = findAlignmentGuides;
   window.scheduleAutosave = scheduleAutosave;

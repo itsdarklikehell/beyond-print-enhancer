@@ -7,6 +7,12 @@
  * it does not reappear after a later boot. The "reload" is simulated the way the
  * product actually sees one: a fresh window whose chrome.storage.local already
  * holds the dismissal flag, booted through the same createControls() path.
+ *
+ * Phase 3 granted the `storage` permission, so this test's chromeStorage=true case is now
+ * the production path. The chromeStorage=false case still runs — it is the fallback path
+ * (a future commit revoking the permission would bring it back as production) AND the
+ * regression guard that catches the hint re-appearing on every boot, which was the exact
+ * failure that shipped once before.
  */
 "use strict";
 
@@ -64,9 +70,12 @@ const SHEET = `<!DOCTYPE html><html><body>
 /**
  * Boot a window the way the extension does. `storedDismissal` seeds
  * chrome.storage.local, which is the persistence a real reload would carry.
- * `chromeStorage: false` boots WITHOUT chrome.storage at all — which is what a
- * real content script sees, because the manifest does not request the `storage`
- * permission (measured in the phase-2 browser capture).
+ * `chromeStorage: false` boots WITHOUT chrome.storage at all — the LEGACY path: every
+ * existing user who dismissed the hint before Phase 3 did so under localStorage, so this
+ * case reads the fallback path and asserts a dismissal made before the permission grant
+ * still holds after it. It is also the regression guard that catches the hint re-appearing
+ * on every boot (the failure that shipped once before), because the same code path is what
+ * a future commit revoking the permission would bring back as production.
  */
 function boot({ storedDismissal = undefined, chromeStorage = true, hostFlag = null } = {}) {
   const dom = new JSDOM(SHEET, {
@@ -264,16 +273,23 @@ describe("first-run discoverability hint (AC-5, O-1)", function () {
   });
 
   it("persists through the HOST-ORIGIN store when chrome.storage is absent", async function () {
-    // This is the REAL production path: the manifest does not request the
-    // `storage` permission, so chrome.storage is undefined in a content script.
-    // The first version of this feature relied on chrome.storage and its test
-    // stubbed it — so the suite passed while the hint reappeared on every real
-    // boot. The phase-2 browser capture caught it.
+    // WHAT THIS CASE DESCRIBED, AND WHAT IT DESCRIBES NOW. Until Phase 3 this was the REAL
+    // production path: the manifest did not request the `storage` permission, so chrome.storage
+    // was undefined in a content script. The first version of this feature relied on
+    // chrome.storage and its test stubbed it — so the suite passed while the hint reappeared on
+    // every real boot, and the phase-2 browser capture caught it.
+    //
+    // Phase 3 GRANTED `storage` (AC-V0 option (i)), so `chromeStorage: false` is no longer what
+    // a shipped build boots with. It stays as a case because the API can still be absent: a user
+    // can revoke the permission, and the write path must keep recording the dismissal in the
+    // host store either way (that is what makes `rememberHintDismissed()` write BOTH stores).
+    // The store-first production path and the empty-store read-through are the two cases after
+    // this one; together the three pin every configuration this feature can run in.
     const first = boot({ chromeStorage: false });
     assert.strictEqual(
       typeof first.window.chrome.storage,
       "undefined",
-      "precondition: no extension storage API, as in production",
+      "precondition: no extension storage API, as in a revoked-permission install",
     );
     await first.window.Controls.mountOnboardingHint();
     await tick();
@@ -299,6 +315,58 @@ describe("first-run discoverability hint (AC-5, O-1)", function () {
       second.window.document.getElementById("be-onboarding-hint"),
       null,
       "a dismissed hint must not reappear on a later boot (host-origin path)",
+    );
+  });
+
+  it("does NOT re-show a pre-grant dismissal once storage is granted (the read-through)", async function () {
+    // Phase 3's side effect, asserted rather than promised. Granting `storage` makes
+    // chrome.storage.local the preferred store — and for EVERY existing user it starts out
+    // EMPTY, because their dismissal was recorded under the host-origin key. A `false` there is
+    // "no record", not "never dismissed", so the lookup must fall through to localStorage.
+    // Without the read-through, this is the exact state a real user boots into after the update
+    // and the hint comes back.
+    const legacy = boot({ chromeStorage: false });
+    await legacy.window.Controls.mountOnboardingHint();
+    await tick();
+    legacy.window.document.querySelector(".be-onboarding-hint-dismiss").click();
+    const hostValue = legacy.window.localStorage.getItem(
+      "ddbPrintEnhancer.onboardingHintDismissed",
+    );
+    assert.strictEqual(hostValue, "true", "precondition: dismissed under the legacy key");
+    cleanupGlobals();
+
+    // The upgrade: same host flag, but now the extension HAS a store, and it has nothing in it.
+    const upgraded = boot({ chromeStorage: true, hostFlag: hostValue });
+    assert.deepStrictEqual(
+      upgraded.store,
+      {},
+      "precondition: chrome.storage.local is empty, as it is for every existing user",
+    );
+    await upgraded.window.Controls.mountOnboardingHint();
+    await tick();
+    assert.strictEqual(
+      upgraded.window.document.getElementById("be-onboarding-hint"),
+      null,
+      "the hint must not reappear for a user who already dismissed it (plan.md §Phase 3 carryover)",
+    );
+    assert.strictEqual(
+      await upgraded.window.Controls.hintDismissed(),
+      true,
+      "and the accessor reports it, so no other caller re-derives the opposite",
+    );
+  });
+
+  it("reports NOT dismissed when neither store has anything (a genuinely fresh install)", async function () {
+    // The read-through's other side: falling back must not become "assume dismissed". A user
+    // with an empty store and no host flag sees the hint — that is AC-5's first-run case, and
+    // it is what keeps the previous assertion from passing by always returning true.
+    const { window } = boot({ chromeStorage: true });
+    assert.strictEqual(await window.Controls.hintDismissed(), false, "fresh install shows the hint");
+    await window.Controls.mountOnboardingHint();
+    await tick();
+    assert.ok(
+      window.document.getElementById("be-onboarding-hint"),
+      "…and the mount path agrees with the accessor",
     );
   });
 
@@ -400,7 +468,12 @@ describe("first-run discoverability hint (AC-5, O-1)", function () {
       "the hint is listed in the print hide rules",
     );
     const idx = src.indexOf("#be-onboarding-hint");
-    const surroundings = src.slice(idx, idx + 200);
+    // Anchor the assertion on the DECLARATION BLOCK the selector belongs to, not on a
+    // fixed character window: the hint shares its rule with 13 other selectors, so adding
+    // one more to that list (Phase 4's `.be-ai-ghost`) pushed `display: none` past any
+    // constant budget and turned a correct rule into a red test.
+    const brace = src.indexOf("{", idx);
+    const surroundings = src.slice(brace, src.indexOf("}", brace) + 1);
     assert.ok(
       /display: none !important/.test(surroundings),
       "…where it is hidden",

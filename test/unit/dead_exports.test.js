@@ -135,8 +135,23 @@ describe("AC-1/AC-2 — the audit classifies every export on both surfaces", fun
     // (`showTurnOffSurface`), so the panel's power control and the AC-4 suite open the SAME dialog.
     // Its reader is `test/unit/turn_off_state.test.js`, which asserts the save-then-deactivate
     // order.
-    assert.strictEqual(SUMMARY.directExports, 159, "direct `window.*` assignments");
-    assert.strictEqual(SUMMARY.moduleExports, 158, "of which module exports");
+    // +1 (159 -> 160): AC-4 of byok_ai_layout_20260915 Phase 2 adds `window.AiSettings` — the BYOK
+    // config store (`js/ai_settings.js`), injected by js/background.js right after js/modals.js so
+    // the dialog can resolve `Modals.__createModal`. It is a TEST-SEAM namespace, not a product one
+    // yet: its only `js/` reader is Phase 4's panel button, and the guard's annotation on the
+    // namespace is what keeps that honest. `js/ai_layout.js` (Phase 1's pure core) adds NOTHING
+    // here — it publishes no `window.*` at all until Phase 4 gives it a caller.
+    // +2 (160 -> 162): AC-1/AC-3 of the same track, Phase 4, add the two seams the arrange flow is
+    // made of. `window.AiLayout` is the pure core finally published — it had NO `js/` reader for
+    // three phases precisely because a seam with no caller is what this guard exists to delete, and
+    // Phase 4 is the caller. `window.AiArrange` is the flow itself, read by js/controls.js's
+    // "AI Arrange" row. Both are `live` (a product reader, not a test-seam), so this is the one
+    // count bump in the track that does NOT come with an annotation excuse — and that is deliberate:
+    // the two bare aliases this file's draft also published (`arrangeWithAi`,
+    // `showAiArrangeSurface`) were dropped for having no second reader, which is the guard's own
+    // verdict recorded in js/ai_arrange.js.
+    assert.strictEqual(SUMMARY.directExports, 162, "direct `window.*` assignments");
+    assert.strictEqual(SUMMARY.moduleExports, 161, "of which module exports");
     assert.strictEqual(SUMMARY.hostProperties, 1, "of which host-object properties");
     assert.ok(
       SUMMARY.namespaceMembers > 50,

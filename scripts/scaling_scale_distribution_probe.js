@@ -5,8 +5,8 @@
  *   node scripts/scaling_scale_distribution_probe.js
  *
  * This is the measurement behind the table in
- * `docs/responsive-scaling-wiring-20260913/FIX_REPORT.md` §4 and behind
- * `temp/issues/ISSUE_scaling_floor_spells_0443_20260913.md` (a section at 0.443 is the reason a
+ * `vendor/docs/responsive-scaling-wiring-20260913/FIX_REPORT.md` §4 and behind
+ * `temp/archived/ISSUE_scaling_floor_spells_0443_20260913.md` (a section at 0.443 is the reason a
  * floor on the scale is a question at all). Re-run it after any change to `fitContainer`, because
  * the numbers move with the compensation mechanism.
  */

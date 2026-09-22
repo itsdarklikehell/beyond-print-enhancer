@@ -2,7 +2,7 @@
  * UI theme: design-token layer for the extension chrome — "3.5 Codex on the
  * Workbench" identity (D&D 3.5 nostalgia look, dnd35_nostalgia_look_20260908,
  * ratified by the 3-round Muse Spark art-direction consultation in
- * docs/dnd35-nostalgia-20260908/).
+ * vendor/docs/dnd35-nostalgia-20260908/).
  *
  * Replaces the 1.7.0 fantasy print-shop tokens (charcoal/parchment/brass)
  * with the locked leather-and-bone set: leather-black grounds, bone as text
@@ -118,6 +118,12 @@ const ORNAMENT_SURFACES = {
   plain: [
     ".be-feedback",
     ".be-section-actions",
+    // The centred drag handle is in-sheet chrome, in the same rank as the
+    // section action bar it sits beside (ISSUE_drag_and_drop.md). Declared here
+    // so the ornament hierarchy names it rather than leaving it unclassified:
+    // ornamenting a node that floats over the CONTENT would be the "fractal
+    // framing" failure muse_review_2 step 2 named.
+    ".be-drag-handle",
     ".be-more-options-button",
     ".be-layer-item-card",
     ".be-modal-tags",
@@ -155,7 +161,7 @@ function cornerLayers(corners) {
 }
 
 /** Emit one ornamented surface. The rule stack, verified by a raw-pixel
- *  scanline probe (docs/ornament-symmetry-20260910/pixel-probe.json, produced
+ *  scanline probe (vendor/docs/ornament-symmetry-20260910/pixel-probe.json, produced
  *  by temp/ornament_pixel_probe.js) and measured from the BORDER BOX edge:
  *
  *    [-1, 0]px  rule A  1px #0C0907  the outer BLIND TOOL (a box-shadow ring)
@@ -273,7 +279,20 @@ const THEME_CSS = `
 }
 
 /* ---------- shared chrome surface language (leather grounds + seams) ---------- */
-#print-enhance-controls,
+#print-enhance-controls {
+  background: ${TOKENS.groundPanel} !important;
+  border: 1px solid ${TOKENS.seamDeep} !important;
+  border-radius: 12px !important;
+  /* ISSUE_shadows.md: NO box-shadow at all — the shared block used to carry
+     TOKENS.shadowPanel here for all three panels; the two that were not
+     complained about keep it, this one does not. */
+  font-family: ${TOKENS.fontTool};
+  max-height: calc(100vh - 20px) !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: ${TOKENS.goldShadow} transparent;
+}
 #print-enhance-layer-manager,
 .be-layer-panel {
   background: ${TOKENS.groundPanel} !important;
@@ -293,6 +312,32 @@ const THEME_CSS = `
   scrollbar-width: thin;
   scrollbar-color: ${TOKENS.goldShadow} transparent;
 }
+/* ---------- ISSUE_shadows.md: the control panel casts NO shadow ----------
+ * The owner's words: "The shadows on #print-enhance-controls look bad, remove
+ * them. they aren't necessary." FOUR declarations piled blurred black onto this
+ * one element, which is why calming just one of them never worked: each is
+ * !important and the LAST one in the sheet wins, so touching an earlier one
+ * only lets a later one show through.
+ *   1. an INLINE 0 4px 15px rgba(0,0,0,0.5) set in js/controls.js — deleted AT
+ *      THE SOURCE, because an inline declaration outranks anything that is not
+ *      also !important and was therefore invisible to every previous attempt;
+ *   2. the shared chrome lift shadowPanel (0 6px 24px) directly
+ *      above — the only surface that keeps it is the layer manager / layer
+ *      panel, so the entry is now inert for this id (3 and 4 both name it later
+ *      and outrank it);
+ *   3. the same lift again inside the sheet-edge workbench buffer below;
+ *   4. the same lift a third time inside the ornament ring stack emitted by
+ *      ornamentSurface() — the one that actually painted.
+ * shadowPanel is now ABSENT from every box-shadow list naming this panel
+ * rather than being overridden with none: a final box-shadow: none would
+ * have looked tidier but would also have deleted the panel's ornament frame,
+ * which is the thing track ornament_symmetry_20260910 exists to pin.
+ * WHAT SURVIVES is not shadow: a box-shadow with zero offset-blur is a frame.
+ * The panel still gets 0 0 0 1px #0C0907 (rule A, the blind tool), the
+ * 12px 0 0 / 13px 0 0 solid workbench buffer, rule B (its 1px hairGold border)
+ * and rule C / the corner Ls. background, border, border-radius and the
+ * hover transform are untouched. Net effect: the leather tray keeps its tooled
+ * edge and stops floating a black smudge over the bone sheet. */
 .be-layer-panel::-webkit-scrollbar,
 .be-ctl-scroll::-webkit-scrollbar {
   width: 8px;
@@ -316,9 +361,33 @@ const THEME_CSS = `
  * ground-well strip + 1px gold hairline on its sheet-facing side, so the
  * visible order is leather > dark well > hairline > bone sheet. The sheets
  * sit exactly at the tray edges (measured: sheet bone starts at the panel
- * right edge and ends at the layer-manager left edge). */
+ * right edge and ends at the layer-manager left edge).
+ *
+ * ISSUE_shadows.md (2026-09-14) — the control panel's entry lost its
+ * shadowPanel lift and now carries ONLY the buffer. FOUR blurred
+ * declarations used to pile up on #print-enhance-controls, each !important,
+ * so the last one in the sheet won and calming any single earlier one changed
+ * nothing:
+ *   1. an INLINE 0 4px 15px rgba(0,0,0,0.5) in js/controls.js — deleted AT THE
+ *      SOURCE, an inline declaration outranks anything not also !important and
+ *      was therefore invisible to every previous attempt;
+ *   2. the shared chrome lift in the surface block above (removed here too);
+ *   3. this buffer rule;
+ *   4. the ornament ring stack emitted by ornamentSurface() — the one that
+ *      actually painted.
+ * shadowPanel is now absent from every list naming this panel rather than
+ * overridden with box-shadow: none: a final none would have looked tidier
+ * and would also have deleted the panel's ornament frame, which is exactly what
+ * track ornament_symmetry_20260910 exists to pin. What survives here is NOT a
+ * shadow — a box-shadow with zero offset-blur is a frame: rule A (the 1px
+ * #0C0907 blind tool), rules B and C (the hairlines) and the corner Ls all
+ * stand, background / border / border-radius / the hover transform are
+ * untouched. Net effect: the leather tray keeps its tooled edge and stops
+ * floating a black smudge over the bone sheet. The layer manager keeps its
+ * lift — it was not part of the complaint, and the two trays must not be
+ * silently re-tiered by a fix aimed at one of them. */
 #print-enhance-controls {
-  box-shadow: ${TOKENS.shadowPanel}, 12px 0 0 ${TOKENS.groundWell}, 13px 0 0 ${TOKENS.hairGold} !important;
+  box-shadow: 12px 0 0 ${TOKENS.groundWell}, 13px 0 0 ${TOKENS.hairGold} !important;
 }
 #print-enhance-layer-manager {
   box-shadow: ${TOKENS.shadowPanel}, -12px 0 0 ${TOKENS.groundWell}, -13px 0 0 ${TOKENS.hairGold} !important;
@@ -1288,6 +1357,169 @@ div[style*="z-index: 20000"] label {
   background: ${TOKENS.goldHi} !important;
   border-color: ${TOKENS.gold} !important;
 }
+/* ------------------------------------------------------------------------- *
+ * BYOK settings dialog (track byok_ai_layout_20260915, Phase 2) — the form
+ * primitives. This is the first modal body in the extension with more than one
+ * field: showInputModal renders a bare input and puts its prompt in the shell's
+ * message area, so there was no row/label rule to inherit and these are new.
+ *
+ * Why the credential field is named explicitly: the block above styles
+ * input[type="text"], [type="number"], [type="search"] and textarea, and AC-4
+ * requires the key field to be type=password from its first render — which that
+ * selector list does NOT match. Left alone it renders as the browser-default white
+ * box on the leather ground (the same cross-origin-sheet failure the comment above
+ * the input block records for the migrated dialogs), so it is declared here rather
+ * than left to the cascade. Heights carry !important for that same reason and
+ * take T4 — a labelled row in a dialog is not a fifth tier.
+ * ------------------------------------------------------------------------- */
+.be-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.be-field-label {
+  color: ${TOKENS.taupe};
+  font-family: ${TOKENS.fontTool};
+  font-size: 13px;
+}
+.be-modal select,
+.be-modal input[type="password"] {
+  background: ${TOKENS.groundTray} !important;
+  border: 1px solid ${TOKENS.hairBone} !important;
+  color: ${TOKENS.bone} !important;
+  border-radius: ${TOKENS.radiusInner};
+  height: ${TIERS.input}px; /* T4 (AC-4) — the same tier as the other modal inputs */
+  flex: 0 0 auto;
+  padding: 0 9px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+/* Key field + its reveal toggle in one line. min-width: 0 is not decoration: a
+ * flex item's content box cannot shrink below its text, so without it a long
+ * pasted key pushes the reveal button out of the dialog. */
+.be-ai-key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.be-ai-key-row .be-modal-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* ---- track byok_ai_layout_20260915, Phase 4: the arrange surface ------------------
+ * All four rules sit in the theme layer rather than inline at the call sites for the reason
+ * controls.js documents for the panel's own shadow: an inline declaration outranks every
+ * stylesheet rule, and the theme layer is the single writer of this product's surface language.
+ * No color literal appears below - TOKENS only - which is what keeps the AI dialogs from being
+ * the place the palette leaks.
+ * (NOTE: this is CSS inside a template literal. A backtick here closes the stylesheet, so prose
+ * in this region quotes with apostrophes like everyone else in the file.) */
+/* The prompt is a textarea, so it needs the input chrome the '.be-modal input[type=...]' selector
+ * does NOT match, plus resize:vertical - 'resize: both' lets a user drag the box wider than the
+ * 400px dialog and break the shell's own measurement. */
+.be-modal textarea.be-ai-instruction {
+  background: ${TOKENS.groundTray} !important;
+  border: 1px solid ${TOKENS.hairBone} !important;
+  color: ${TOKENS.bone} !important;
+  border-radius: ${TOKENS.radiusInner};
+  padding: 8px 9px;
+  font-size: 13px;
+  font-family: ${TOKENS.fontTool};
+  line-height: 1.45;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: ${TIERS.input}px;
+  resize: vertical;
+}
+.be-ai-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* The disabled AI Arrange row. The control is PRESENT and greyed rather than hidden (O-2), and a
+   greyed button that still looks clickable is the trap, so the label dims to the icon tick colour
+   and the cursor says "not this". */
+.be-ctl-btn.be-ctl-ai-off {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* The preview's ghost layer. 'pointer-events: none' is set on the node inline too - belt and
+   braces on purpose: a ghost you can click would sit over the real sheet and swallow a drag. */
+.be-ai-ghost {
+  pointer-events: none;
+}
+.be-ai-ghost-box {
+  /* 3px + translucent fill: a 2px dashed line on the dimmed, blurred sheet under the modal overlay
+     was too subtle to read as a proposal — the AC-V1 review could not discern it against the
+     backdrop (Muse: "no ghost-box geometry discernible"). The fill makes the affected region read
+     as "this will change" without duplicating the content: at 0.18 opacity the section's own text
+     stays fully legible THROUGH it (it is not a second copy, so it neither prints nor scans). */
+  border: 3px dashed ${TOKENS.gold} !important;
+  border-radius: ${TOKENS.radiusInner};
+  background: rgba(198, 161, 91, 0.18) !important;
+  box-shadow: none !important;
+  opacity: 0.95;
+}
+.be-ai-ghost-box-hidden {
+  border-color: ${TOKENS.emberDim} !important;
+}
+.be-ai-ghost-label {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-family: ${TOKENS.fontTool};
+  font-size: 11px;
+  color: ${TOKENS.goldHi};
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 8px);
+}
+/* The in-flight marker. It must outlast the toast (~3.5 s) because a provider round trip does, and
+   it sits at the top of the stack where the panel already draws - never centred, which would cover
+   the section the user is watching. The literal below is the theme's own top rung, deliberately
+   ABOVE the toast's 800 and above the panel's band (the map in js/section_utils.js puts it at
+   10000): the
+   busy marker has to be readable while the panel is open. It is a literal rather than a template
+   of that map because js/ui_theme.js renders this stylesheet as a string and cannot read a seam
+   that only exists on a page (the same reason .be-feedback above carries 800 outright). */
+.be-ai-busy {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10001;
+  background: ${TOKENS.groundModal};
+  border: 1px solid ${TOKENS.hairGold};
+  border-radius: ${TOKENS.radius};
+  color: ${TOKENS.boneDim};
+  font-family: ${TOKENS.fontTool};
+  font-size: 12px;
+  padding: 6px 12px;
+  box-shadow: none !important;
+}
+.be-ai-preview-counts {
+  font-weight: 600;
+}
+.be-ai-preview-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: ${TOKENS.boneDim};
+}
+.be-ai-preview-note {
+  font-style: italic;
+}
+/* The hint text used to be reachable only as a <p> (.be-modal p), which is why
+ * it never needed a rule. The dialog's key-state line is a span inside a row, and
+ * a status line is a live region — both must read as secondary text, not as the
+ * modal's default 16px bone. */
+.be-modal-hint {
+  color: ${TOKENS.taupe};
+  font-size: 13px;
+}
+
 .be-modal-tabs button {
   background: transparent !important;
   border: none !important;
@@ -1738,7 +1970,7 @@ div[style*="z-index: 20000"] label {
  * ORNAMENT LAYER (track ornament_symmetry_20260910) — three FULL surfaces only
  *
  * Rule stack per surface, measured from the BORDER BOX edge and verified with
- * a raw-pixel scanline probe (docs/ornament-symmetry-20260910/pixel-probe.json):
+ * a raw-pixel scanline probe (vendor/docs/ornament-symmetry-20260910/pixel-probe.json):
  *   A blind tool  1px #0C0907  at [-1, 0]px  (a box-shadow ring, OUTERMOST)
  *   B outer hair  1px #4A3E2B  at [ 0, 1]px  (the CSS border)
  *   C inner hair  1px          at [ 6, 7]px  (::before, inset 5px of the padding box)
@@ -1751,7 +1983,14 @@ div[style*="z-index: 20000"] label {
 
 ${ornamentSurface(
   ORNAMENT_SURFACES.full[0],
-  `${TOKENS.shadowPanel}, 12px 0 0 ${TOKENS.groundWell}, 13px 0 0 ${TOKENS.hairGold}`,
+  // ISSUE_shadows.md: `${TOKENS.shadowPanel}` is NOT in this list. The
+  // ornament's own ring stack was the LAST of the four declarations and
+  // therefore the one that actually painted, which is why removing it anywhere
+  // else in the sheet changed nothing. Rules A (the 1px #0C0907 blind tool
+  // `0 0 0 1px`, emitted by ornamentSurface itself) and the zero-blur workbench
+  // buffer stay: a shadow with no blur is the frame, and the frame is what this
+  // track exists to pin. The other two full surfaces keep their lift.
+  `12px 0 0 ${TOKENS.groundWell}, 13px 0 0 ${TOKENS.hairGold}`,
   ORNAMENT_CORNERS.top,
   ORNAMENT.innerPanel,
 )}

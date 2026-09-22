@@ -26,12 +26,16 @@ describe("AC-6 — the capture plumbing is shared and the roster stopped growing
   this.timeout(20000);
 
   it("every capture spec builds its harness from the ONE helper", function () {
-    // The capture specs: the eleven `*_visual_capture` files PLUS `lock_handle_visibility.spec.js`,
+    // The capture specs: the `*_visual_capture` files PLUS `lock_handle_visibility.spec.js`,
     // which writes a pixel artifact under the same convention and declared its own copy of the
-    // plumbing until this phase. Named explicitly, so a twelfth capture spec cannot be added without
+    // plumbing until this phase. Named explicitly, so a new capture spec cannot be added without
     // this list (and therefore this guard) noticing.
     const captures = specs().filter((f) => f.includes("_visual_capture") || f === "lock_handle_visibility.spec.js");
-    assert.strictEqual(captures.length, 12, "the capture specs are still there (" + captures.length + ")");
+    // 12 -> 13, byok_ai_layout_20260915 Phase 2 (2026-09-17): `byok_settings_visual_capture` is
+    // the AC-V1-lite frame producer. The count is the guard's tripwire — the assertion that
+    // MATTERS is the per-file loop below, which this new file passes by BUILDING its harness from
+    // `captureHarness(...)` instead of re-declaring the *_SHOTS/provenance/viewport plumbing.
+    assert.strictEqual(captures.length, 13, "the capture specs are still there (" + captures.length + ")");
     for (const f of captures) {
       const text = fs.readFileSync(path.join(E2E, f), "utf8");
       assert.ok(
@@ -141,7 +145,39 @@ describe("AC-6 — the capture plumbing is shared and the roster stopped growing
     // The phase retired FIVE aliases (verify0..verify4) and added NONE. The remaining per-file
     // scripts are the curated `test:e2e:<topic>` runs this repo has carried for many tracks; the
     // assertion is that the roster did not GROW in this phase, which is what the criterion asks.
-    const ROSTER_AFTER = 37;
+    //
+    // 37 -> 38, sheet-affordances 20260914: `test:e2e:affordances` is the one addition, and it is
+    // the roster's existing shape (a curated run per topic, beside `test:e2e:glow` etc.), not a
+    // duplicate of the glob. `--grep` was considered and rejected on cost: that suite is 13 real
+    // browser cases at ~32 s each (about 7 minutes), so it is the run a developer wants to be able
+    // to invoke by NAME while iterating on the affordances, exactly like the glow suite above it.
+    // 38 -> 39, byok_ai_layout_20260915 Phase 2 (2026-09-17): `test:e2e:byoksettings`, and the
+    // same shape as the affordance alias above it (a curated run per topic). The reason it is a
+    // NAME rather than a `--grep`: the spec's whole value is the isolated-world probes against
+    // the REAL permission set, and its first case is a manifest assertion whose failure message
+    // orders Phase 3 to replace these cases the moment `storage` is granted. A grep over 70
+    // files cannot express "run the one file whose premise is a permission".
+    // 39 -> 40, same phase, GATE 3 finding D1: `test:e2e:byokpersist` is that replacement — the
+    // persist-and-reload round trip, run against a STAGED copy of the extension that carries the
+    // grant. It cannot ride the recursive run: `test:e2e` loads the worktree extension, and this
+    // file needs its own context pointed at `temp/.pw-ext-*`, so it has to be invocable on its
+    // own. Two files, two curated runs, one per premise.
+    // 40 -> 41, byok_ai_layout_20260915 Phase 3 (2026-09-17): `test:e2e:byokrelay`, the same
+    // shape again and for the same reason as the two above it. AC-5's gate is THREE NAMED probes
+    // run against the REAL extension worker, and the plan says all three must be seen before the
+    // box ticks — which means being able to invoke exactly this file by name. A `--grep` over the
+    // recursive run cannot express it either: the probes plant `chrome.storage.local` in
+    // `beforeEach` and clear it in `afterEach`, so they must not interleave with another file's
+    // store assertions in the same context.
+    // 41 -> 42, byok_ai_layout_20260915 Phase 4 (2026-09-18): `test:e2e:byokarrange`, the same
+    // shape and for the same reason as the three above it. AC-V1's evidence is produced by THIS
+    // file's last case (the `BYOK_SHOTS=1` frame capture), and the gate that consumes it is the
+    // Muse visual loop — so obtaining the artifact means invoking exactly this file, repeatedly,
+    // while the verdict is argued over. A `--grep` over the recursive run cannot serve that: the
+    // suite stubs `fetch` inside the MV3 SERVICE WORKER (`serviceWorker.evaluate`) and plants a
+    // test key in `beforeEach`, so its cases must not interleave with another file's store or
+    // relay assertions in the same context.
+    const ROSTER_AFTER = 42;
     assert.strictEqual(
       perSpec.length,
       ROSTER_AFTER,
