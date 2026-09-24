@@ -31,6 +31,13 @@
     const disabledLayers = document.querySelectorAll(
       '[data-print-disabled="true"]',
     );
+    // Track byok_ai_layout_20260915 (AC-1's `hide`): a single SECTION hidden from print, written
+    // from `layout.sections[id].printHidden` by js/layout_apply.js — the one writer, so this is the
+    // one reader. It joins the layer-level `data-print-disabled` rule above rather than replacing
+    // it: a whole layer and one section of a layer are different asks.
+    const hiddenSections = document.querySelectorAll(
+      '[data-print-hidden="true"]',
+    );
 
     let css = "@media print {\n";
 
@@ -53,6 +60,17 @@
     disabledLayers.forEach((layer) => {
       if (layer.id) {
         css += `  #${layer.id} { display: none !important; }\n`;
+      }
+    });
+
+    // Hide single sections the AI arrange patch (or any future writer of the flag) marked. The
+    // flag sits on the CONTAINER (that is where `minimized`, `compact` and `noAutoScale` live, and
+    // where scanLayout reads from), so this rule names that element. The wrapper stays behind as an
+    // empty absolutely-positioned box — it carries no ink, and leaving it is what keeps the sheet's
+    // other sections exactly where the user put them instead of reflowing the page.
+    hiddenSections.forEach((section) => {
+      if (section.id) {
+        css += `  #${section.id} { display: none !important; }\n`;
       }
     });
 
@@ -884,18 +902,32 @@ function enforceFullHeight() {
       body.be-lock-shapes .be-shape-wrapper .print-section-resize-handle {
           display: none !important;
       }
-      /* …and its action bar stays reachable while locked. */
-      .be-layer-locked .be-section-wrapper:hover .be-section-actions,
-      .be-layer-locked .be-shape-wrapper:hover .be-section-actions {
-          opacity: 1 !important;
-          pointer-events: auto !important;
-      }
+      /* …and the lock's state is signalled on the wrapper itself (opacity +
+         not-allowed cursor above). The action bar is NOT revealed here:
+         ISSUE_hover.md — hover-revealed actions belong to the ACTIVE layer
+         ONLY, for every layer state, so the one reveal rule below (scoped to
+         .be-active-layer) is the only mechanism. */
 
+      /* ISSUE_drag_and_drop.md (2026-09-14): the GREEN HOVER GLOW is gone. This rule
+         used to paint filter: drop-shadow(0 0 15px #28a745) twice over the hovered
+         section — a filter repaints the whole subtree (every border, background and
+         piece of artwork in the section), which is what the report is about: "the UX
+         of that is extremely bad". The affordance is now a CENTRED NINE-DOT DRAG
+         HANDLE on the active layer's sections, and the handle itself — its box, skin,
+         cursor and reveal — lives with the drag engine that consumes it
+         (js/dnd.js injectDnDStyles), one owner for one component.
+
+         What stays HERE is the part only this file can own: the WRAPPER STACKING. A
+         handle can only sit above the sheet's other sections if the hovered wrapper is
+         raised, and this is the one cascade slot that reliably beats the wrapper's own
+         z-index: 10 / .be-active-wrapper { z-index: 100004 } above it. The raise
+         therefore keeps the removed glow's exact value and selector list — the
+         ordering behaviour is unchanged, only the painted effect is different. The
+         glow's transition: filter 0.3s ease-in-out is deliberately NOT replaced:
+         animating a filter animates the whole subtree, the cost this issue is about. */
       .be-active-layer .be-section-wrapper:hover,
       .be-active-layer .be-shape-wrapper:hover,
       .be-focus-highlight-hover {
-          filter: drop-shadow(0 0 15px #28a745) drop-shadow(0 0 15px #28a745) !important;
-          transition: filter 0.3s ease-in-out;
           z-index: 700000 !important;
       }
 
@@ -941,12 +973,12 @@ function enforceFullHeight() {
       body[class*="be-lock-"] .be-section-wrapper {
           cursor: not-allowed;
       }
-      /* The action bars stay reachable on a locked layer. */
-      body[class*="be-lock-"] .be-shape-wrapper:hover .be-section-actions,
-      body[class*="be-lock-"] .be-section-wrapper:hover .be-section-actions {
-          opacity: 1 !important;
-          pointer-events: auto !important;
-      }
+      /* The action bar is NOT revealed on a locked layer (ISSUE_hover.md):
+         hover-revealed actions belong to the ACTIVE layer only — the single
+         .be-active-layer rule is the ONE mechanism, and these body-level
+         lock classes name "ANY layer is locked" (the product keeps every
+         layer but one locked), so an arm here would reveal actions on
+         inactive layers again. */
       /* Locked state cue: dim the layer element itself. */
       .be-layer-locked {
           opacity: 0.5;
@@ -1037,16 +1069,78 @@ function enforceFullHeight() {
       .be-section-wrapper * {
           cursor: auto;
       }
+      /* Rest state: NO bar, and NOT CLICKABLE. !important is load-bearing
+         here, not decoration: the bar is created with an inline
+         pointerEvents = "all" (js/main.js:2513) to win back clicks from the
+         wrapper's own pointer handling, and an inline declaration outranks a
+         NON-important stylesheet rule at any specificity. Without it, an
+         inactive layer's bar is invisible (opacity 0) yet fully hittable —
+         25×32px dead buttons floating over the section, which is precisely the
+         "buttons on sections regardless of their status" complaint
+         (ISSUE_hover.md) answered halfway. */
       .be-section-wrapper:hover .be-section-actions,
       .be-shape-wrapper:hover .be-section-actions {
           opacity: 0;
-          pointer-events: none;
+          pointer-events: none !important;
       }
 
+      /* THE REVEAL IS SCOPED TO THE ACTIVE LAYER, AND ONLY HERE.
+         (ISSUE_hover.md: "the hover event of the mouse should show the
+         class="be-section-actions" that are on the ACTIVE layer, currently the
+         buttons are being displayed on ALL sections regardless of their
+         status.")
+
+         Two other rules used to reveal the bar — .be-layer-locked …:hover and
+         body[class*="be-lock-"] …:hover — and both are GONE rather than
+         narrowed. They were written for a different complaint (the locked-layer
+         bar being unreachable, ui_ux_audit AC/U-11), but between them they made
+         the bar appear on every layer, because a locked layer is either the
+         active one (first rule) or the body is in that class's lock mode (the
+         other). .be-active-layer is the ONE writer of "the layer you're
+         working on" (js/dom/layer_manager.js:1329 applyInsertionTarget), so it
+         is the only scope the reveal may use. The same class scopes the drag
+         handle (js/dnd.js) — one definition, two consumers. */
       .be-active-layer .be-section-wrapper:hover .be-section-actions,
       .be-active-layer .be-shape-wrapper:hover .be-section-actions {
           opacity: 1;
           pointer-events: auto !important;
+      }
+
+      /* THE BAR YIELDS TO THE GRIP WHILE THE GRIP IS REVEALED — option 3 of
+         temp/archived/ISSUE_grip_covered_by_actions_bar_on_small_sections_20260914.md, chosen
+         over raising the grip above the bar because raising it STEALS A BUTTON: measured on
+         the live sheet, a grip hoisted over the bar covers 60% of the top-row Select button
+         on section-extra-tidbits-wrapper (151.5x62px) INCLUDING that button's own centre,
+         so "grabbable everywhere" would have been bought with "unselectable there".
+
+         WHY ONE NUMBER MOVES AND NOT TWO: a positioned wrapper with a z-index is its own
+         STACKING CONTEXT (be-section-wrapper carries z-index 10, and on the same hover that
+         reveals the grip the raise above gives it 700000), so the bar's level is scoped INSIDE
+         the hovered wrapper — it never has to out-rank the sheet, only its own siblings: the
+         section's content (print-section-container, z-index 0) and the grip. Both bounds are
+         therefore real: below the grip's 700002 (js/dnd.js — the collision being fixed) and
+         above the content the bar must sit on (the stylesheet's own be-section-actions
+         already uses 20 for that). 700001 sits in that gap and reads as "just under the grip"
+         beside the 700000/700002 pair this cascade already uses.
+
+         The bar keeps its inline built level (js/main.js getOrCreateActionContainer, which
+         reads ACTIONS_BAR from the ONE map in js/section_utils.js) whenever the grip is NOT on
+         screen, so the reachability that level was added for is untouched; and !important is
+         load-bearing here for the same reason the two rules above carry it — inline outranks a
+         NON-important stylesheet rule at any specificity, so a yield without it would silently
+         do nothing.
+
+         THE CONDITION IS THE GRIP'S OWN REVEAL, ARM FOR ARM — be-active-layer plus
+         :hover and :focus-within on the wrapper. That is deliberate: a second, hand-written
+         notion of "the grip is showing" (a state class, a timer) would be a second definition
+         of the same fact and could disagree with js/dnd.js. Same scope, same triggers, one
+         definition — which is also why the yield is inert on a locked or inactive layer, where
+         there is no grip to make room for. */
+      .be-active-layer .be-section-wrapper:hover .be-section-actions,
+      .be-active-layer .be-shape-wrapper:hover .be-section-actions,
+      .be-active-layer .be-section-wrapper:focus-within .be-section-actions,
+      .be-active-layer .be-shape-wrapper:focus-within .be-section-actions {
+          z-index: 700001 !important;
       }
 
       .print-section-container {
@@ -1174,6 +1268,45 @@ function enforceFullHeight() {
       .print-section-container[data-scaling="true"] .print-section-content > div {
           transform-origin: top left;
           min-width: calc(100% / var(--be-scale, 1)) !important;
+      }
+      /* THE FLOOR'S COST, MADE VISIBLE. fitContainer (js/main.js) never scales below
+         MIN_SCALE_FLOOR = 0.60, so a section that would need less than that keeps its tail
+         cut off by .print-section-content's own overflow: hidden — the pre-1.17.3 failure,
+         in a bounded dose. A silent clip is what issue
+         scaling_floor_spells_0443_20260913 objected to (its option 1: "the honest form is
+         then 'shrink to fit, but never below a readable size', with the clip made *visible*
+         somehow (a marker, a panel warning) rather than silent"), so the pass stamps
+         data-scaling-clipped="true" when the scale it applied does NOT fit, and this paints
+         it: a red fade + hairline at the bottom edge of the content box, i.e. exactly the
+         edge where the text stops.
+
+         NOTE THE ABSENCE OF BACKTICKS AND DOLLAR-BRACES HERE, ON PURPOSE: this stylesheet is
+         emitted from a JS template literal, and a backtick inside a CSS comment TERMINATES
+         the literal (test/unit/js_source_syntax.test.js exists for exactly that failure
+         class, and a dollar-brace would be read as a substitution). Style this comment in
+         plain text.
+
+         SCREEN-ONLY, AND THAT IS LOAD-BEARING: on paper nothing changes — the marker is not
+         part of the document, @media print is what the user's PDF is made of, and a warning
+         band printed onto the sheet would be the tool's own notice reaching the paper (the
+         failure class print_output_audit.spec.js was written to catch). The pseudo-element
+         hangs off .print-section-content, which is already position: relative, so it needs
+         no new stacking or layout of its own, and pointer-events: none keeps it from eating
+         a click on the content underneath. It is a pseudo-child, so no "> div" selector and
+         no children walk (js/layout_scan.js, js/undo.js) can mistake it for content. */
+      @media screen {
+          .print-section-container[data-scaling-clipped="true"] .print-section-content::after {
+              content: "";
+              position: absolute;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              height: 14px;
+              pointer-events: none;
+              background: linear-gradient(to bottom, rgba(198, 40, 40, 0), rgba(198, 40, 40, 0.38));
+              outline: 1px dashed rgba(198, 40, 40, 0.65);
+              outline-offset: -1px;
+          }
       }
       .print-section-container div[class$="-row-header"] > div, 
       .print-section-container div[class$="-content"] > div > div {
@@ -1616,6 +1749,7 @@ function enforceFullHeight() {
              test/unit/print_hides_own_surfaces.test.js. */
           .print-section-header, 
           .be-section-actions, 
+          .be-drag-handle,
           .print-section-resize-handle,
           .be-rotation-handle,
           .be-shapes-mode-btn,
@@ -1626,6 +1760,7 @@ function enforceFullHeight() {
           .be-feedback,
           #be-feedback-announcer,
           .be-modal-overlay,
+          .be-ai-ghost,
           .be-context-menu {
               display: none !important;
               visibility: hidden !important;

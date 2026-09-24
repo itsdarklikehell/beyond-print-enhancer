@@ -109,7 +109,15 @@ function createControls() {
   container.style.flexDirection = "column";
   container.style.gap = "8px";
   container.style.borderRadius = "8px";
-  container.style.boxShadow = "0 4px 15px rgba(0,0,0,0.5)";
+  /* ISSUE_shadows.md (2026-09-14): no box-shadow here. This inline
+     `0 4px 15px rgba(0,0,0,0.5)` was the WORST of the three shadows the panel
+     carried, because an INLINE declaration outranks every stylesheet rule that
+     is not also `!important` — so it survived each later attempt to calm the
+     panel down from the theme layer and kept painting a 15px smudge on the bone
+     sheet. The panel is docked to the viewport edge over an opaque page; it does
+     not need a lift to read as floating. The theme layer (js/ui_theme.js) owns
+     its surface language and now declares `box-shadow: none !important` for it;
+     this line is deleted rather than zeroed so there is exactly one writer. */
   container.style.transition = "opacity 0.3s, transform 0.3s";
 
   // Hover logic
@@ -144,6 +152,55 @@ function createControls() {
       id: "be-btn-add-shape",
     },
     { label: "Manage Compact", iconKey: "compact", tray: "layout", action: () => window.handleManageCompact() },
+    {
+      // AI arrange (track byok_ai_layout_20260915, Phase 4 / O-2). PRESENT AND DISABLED until a key
+      // exists: the plan's answer to "should there be a control before consent" was yes, greyed,
+      // with the hint in its tooltip — because an absent control is undiscoverable while a disabled
+      // one is a question the user can ask. Nothing here reaches the network: the row opens a
+      // prompt, and `js/ai_arrange.js` re-reads the store as its own second gate (`arrangeWithAi`
+      // step 1) before a single byte leaves, so a stale `disabled` cannot smuggle a request out.
+      //
+      // WHY THE PROMPT IS A DIALOG AND NOT AN INPUT IN THIS ROW: the tray is 232px wide and its
+      // labels already ellipsize at ~28 characters (see refreshUndoControl below), so free text has
+      // nowhere to be typed. The row is the entry point; `showAiArrangeSurface` owns the field.
+      label: "AI Arrange",
+      title: "Ask your AI to arrange the sheet - needs your own API key",
+      iconKey: "sparkle",
+      tray: "layout",
+      id: "be-btn-ai-arrange",
+      action: () => {
+        // ONE seam, ONE route: `js/ai_arrange.js` publishes `window.AiArrange` and nothing else, so
+        // the namespace lookup below is the only way in. A missing namespace means the module was
+        // not injected (a page booted before this file shipped, or a partial injection), and the
+        // refusal says so instead of throwing.
+        const api = window.AiArrange;
+        if (api && typeof api.showAiArrangeSurface === "function") {
+          return api.showAiArrangeSurface();
+        }
+        window.showFeedback?.("AI arrange is not available on this page.", "error");
+        return undefined;
+      },
+    },
+    {
+      // The key lives behind its own row rather than being collected inside the arrange dialog, so
+      // that the credential and the instruction never share a submit button: the arrange path reads
+      // the store and never receives a key argument (AC-4's "the modal is not a transport"). This
+      // is also `showAiSettingsModal`'s first PRODUCT caller — it existed since Phase 2 with test
+      // readers only.
+      label: "AI Settings",
+      title: "Choose your AI provider and store your key on this device",
+      iconKey: "lock",
+      tray: "layout",
+      id: "be-btn-ai-settings",
+      action: () => {
+        const api = window.AiSettings;
+        if (api && typeof api.showAiSettingsModal === "function") {
+          return api.showAiSettingsModal();
+        }
+        window.showFeedback?.("AI settings are not available on this page.", "error");
+        return undefined;
+      },
+    },
     {
       label: "Print",
       iconKey: "printer",
@@ -845,6 +902,62 @@ function createControls() {
   window.addEventListener("be-undo-stack-changed", refreshUndoControl);
   refreshUndoControl();
 
+  /**
+   * Keep the AI arrange control in step with the credential (O-2, track byok_ai_layout_20260915).
+   *
+   * Same shape as `refreshUndoControl` directly above, deliberately: an event-driven read of the
+   * authority, run once at build time and again on every change, with the meaning that does not fit
+   * the label carried by the tooltip and the accessible name. The authority is `AiSettings`'s
+   * `hasStoredKey()` — the credential store itself — never the `keyPresent` flag a record happens
+   * to carry, for the reason `saveSettings` documents (a caller-shaped record once could have
+   * claimed a key that was never written).
+   *
+   * `hasStoredKey()` is async, so a guard keeps a slow read from overwriting a newer one: if the
+   * user removes the key while this is in flight, the second run wins. Without it the control could
+   * end up ENABLED with no credential — which is exactly the stale-button state this exists to
+   * prevent, so the race is closed rather than assumed away.
+   */
+  let aiKeyReadSeq = 0;
+  function refreshAiControls() {
+    const btn = container.querySelector("#be-btn-ai-arrange");
+    const settingsBtn = container.querySelector("#be-btn-ai-settings");
+    if (!btn && !settingsBtn) return;
+    const api = window.AiSettings;
+    const seq = ++aiKeyReadSeq;
+    const has = api && typeof api.hasStoredKey === "function"
+      ? Promise.resolve(api.hasStoredKey())
+      : Promise.resolve(false);
+    has.then((keyPresent) => {
+      if (seq !== aiKeyReadSeq) return undefined;
+      if (btn) {
+        btn.disabled = !keyPresent;
+        const span = btn.querySelector(".be-ctl-label");
+        if (span) span.textContent = "AI Arrange";
+        const hint = keyPresent
+          ? "Ask your AI to arrange the sheet"
+          : "AI arrange is off until you add your own API key in AI Settings";
+        btn.title = hint;
+        btn.setAttribute("aria-label", hint);
+        btn.classList.toggle("be-ctl-ai-off", !keyPresent);
+      }
+      // The settings row is ALWAYS enabled — it is how a user gets out of the disabled state. Its
+      // tooltip says which way the key currently stands, read from the same single source.
+      if (settingsBtn) {
+        const s = keyPresent ? "your key is stored on this device" : "no key stored yet";
+        settingsBtn.title = "Choose your AI provider and model - " + s;
+        settingsBtn.setAttribute("aria-label", settingsBtn.title);
+      }
+      return undefined;
+    }).catch(() => {
+      // A store that cannot answer leaves the control DISABLED, which is the safe direction:
+      // a disabled row with a hint is a question, an enabled row with no key is a failed request.
+      if (seq === aiKeyReadSeq && btn) btn.disabled = true;
+    });
+    return undefined;
+  }
+  window.addEventListener("be-ai-key-changed", refreshAiControls);
+  refreshAiControls();
+
   // Ensure print styles (opacity overrides, manager hiding) are generated on initialization
   if (typeof window.updatePrintStyles === "function") {
     window.updatePrintStyles();
@@ -868,14 +981,20 @@ const ONBOARDING_HINT_LS_KEY = "ddbPrintEnhancer.onboardingHintDismissed";
 let onboardingHintDismissedInMemory = false;
 
 /**
- * The preferred store. NOTE (measured in the phase-2 capture): the manifest does
- * NOT request the `storage` permission — PRIVACY_POLICY.md commits the extension
- * to "the minimum permissions necessary to function" — so `chrome.storage` is
- * UNDEFINED in a real content script. The first version of this feature relied on
- * it and its unit test passed only because the test STUBBED chrome.storage: the
- * hint then reappeared on every boot in the real product. The chain below is the
- * fix, and the test now covers the host-origin path that production actually
- * takes.
+ * The preferred store. Phase 3 granted the `storage` permission (the AC-V0 option (i)
+ * answer), so `chrome.storage` is now defined in a real content script and this is the
+ * flag's home. The host-origin `localStorage` entry is the LEGACY half of that change:
+ * every user who dismissed the hint before Phase 3 did so under localStorage, because the
+ * store did not exist for content scripts then. `hintDismissed()` therefore reads storage
+ * first and FALLS THROUGH to the host flag when the store answers empty, and
+ * `rememberHintDismissed()` writes BOTH — which is what stops the dismissal flag from being
+ * "stored in localStorage and ignored" the moment storage is granted, the exact rot that made
+ * hintStore()'s first version re-show the hint on every boot.
+ *
+ * Why localStorage is still WRITTEN (not just read): a future commit could revoke the
+ * permission, and the product degrades to the host-origin path in that case (the same
+ * fallback `hintStore()` already returns `null` for). Keeping both in sync means the
+ * dismissal holds across either permission state without a second migration later.
  */
 function hintStore() {
   try {
@@ -901,6 +1020,14 @@ function hintLocalStorage() {
 /**
  * Read the dismissal flag. An unreadable store reads as "not dismissed", i.e.
  * the hint shows, which is the safe direction for an onboarding affordance.
+ *
+ * THE READ-THROUGH IS THE POINT (Phase 3, the `storage` grant's side effect). A store that
+ * answers successfully and EMPTY is different from a store that cannot be read: before this
+ * commit every dismissal was recorded under the host-origin key, so "no key in
+ * chrome.storage.local" is the normal state of every EXISTING user, not evidence they never
+ * dismissed anything. Returning `false` there re-shows a card the user already closed — which
+ * is why the store's negative answer falls through to `hintLocalStorage()` instead of ending
+ * the lookup. An unparseable or unreachable store also lands there.
  */
 function hintDismissed() {
   const store = hintStore();
@@ -908,21 +1035,35 @@ function hintDismissed() {
     try {
       const maybe = store.get(ONBOARDING_HINT_KEY);
       if (maybe && typeof maybe.then === "function") {
-        return maybe.then((res) => !!(res && res[ONBOARDING_HINT_KEY]));
+        return maybe.then(
+          (res) => !!(res && res[ONBOARDING_HINT_KEY]) || legacyHintDismissed(),
+          () => legacyHintDismissed(),
+        );
       }
       return new Promise((resolve) => {
         try {
           store.get(ONBOARDING_HINT_KEY, (res) =>
-            resolve(!!(res && res[ONBOARDING_HINT_KEY])),
+            resolve(!!(res && res[ONBOARDING_HINT_KEY]) || legacyHintDismissed()),
           );
         } catch {
-          resolve(onboardingHintDismissedInMemory);
+          resolve(legacyHintDismissed() || onboardingHintDismissedInMemory);
         }
       });
     } catch {
       /* fall through to the host-origin store */
     }
   }
+  return legacyHintDismissed().then(
+    (legacy) => legacy || onboardingHintDismissedInMemory,
+  );
+}
+
+/**
+ * The legacy half of the lookup, as its own function because THREE paths reach it: the store
+ * answering empty, the store rejecting, and no store at all. Reads "not dismissed" as `false`
+ * so the caller's in-memory fallback still applies.
+ */
+function legacyHintDismissed() {
   const ls = hintLocalStorage();
   if (ls) {
     try {
@@ -931,9 +1072,14 @@ function hintDismissed() {
       /* fall through */
     }
   }
-  return Promise.resolve(onboardingHintDismissedInMemory);
+  return Promise.resolve(false);
 }
 
+/**
+ * Record the dismissal in BOTH stores, so it holds whichever way the permission is set on the
+ * next boot. The `localStorage` write is not a legacy relic: it is what keeps the promise true
+ * if `storage` is ever revoked, and `hintDismissed()` reads the same key.
+ */
 function rememberHintDismissed() {
   onboardingHintDismissedInMemory = true;
   const store = hintStore();

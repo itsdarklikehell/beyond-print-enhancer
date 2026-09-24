@@ -113,6 +113,49 @@ One warning worth repeating: a killed run leaves `temp/browser_gate.lock` behind
 guard whose pid is dead (recording the restart in the artifact) — do not add a second guard at the
 scheduler level, because two guards drift and the unwatched one is the one that gets it wrong.
 
+### Cutting a release: the gate refuses a bump the browser suite has not certified
+
+```bash
+npm run release:check          # node scripts/release_gate.js — reads the nightly's artifact, runs in ms
+```
+
+**A release step nobody can skip.** The nightly above *runs* the browser gate; nothing used to compare
+its verdict with a version bump. `2.1.0` shipped on 2026-09-20 with the two most recent nightlies
+reporting `collection mismatch / execution skipped` (the run never executed a single case, so the
+`byok_arrange_roundtrip` suite that *is* that release's evidence contributed zero), the four before
+them each failing `manual_verification_phase0`, and `js/` last changed 9 h 48 m AFTER the newest run
+started. The schedule existed; the **link** did not. `scripts/release_gate.js` is the link, and it
+checks what a runner structurally cannot see about itself:
+
+* **Freshness** — the artifact must be under 26 h old (`--max-age-hours N`) AND newer than the last
+  commit touching `js/`. A green run cannot be evidence about code written after it began.
+* **Coverage of the release surface** — every spec a release depends on (`byok_arrange_roundtrip` plus
+  `manual_verification_phase0..4`; add yours with `--require-spec path/to/x.spec.js`) must have
+  contributed cases, at the count `test/browser_e2e/spec_inventory.json` pins, and every one must be
+  `pass`. The inventory is the witness rather than a number typed into this script, so a case deleted
+  from a required spec fails the release check even if the nightly stayed green.
+* **The worktree** — uncommitted `js/` changes fail it: no artifact can have run bytes that are not
+  committed.
+* **It fails closed.** No artifact, unparseable artifact, an artifact with no `cases[]` (exactly the
+  shape a pre-execution death writes), an unreadable inventory and a `git` that cannot answer are all
+  findings with their own marker (`R0`…`R10`), never skips.
+
+The release step is then: gate green (`npm run test:browser-gate` or tonight's task) → `npm run
+release:check` → bump `package.json` **and** `manifest.json` together (`manual_verification_phase4.spec.js`
+asserts they agree) → `CHANGELOG.md`, quoting the artifact path and its `started_at` the check prints.
+A run written outside the two default directories is read with `--artifact <path>`; the first thing
+this gate ever certified was exactly such a run — `temp/browser_gate/release_wiring/artifact.json`,
+`sharded:4`, started 2026-09-20T20:02:28Z, 1886 s, 230 passing / 95 pending / 0 failing, all 325
+collected cases recorded, every one of the six required specs present at its inventoried count
+(`byok_arrange_roundtrip` 7/7 and `manual_verification_phase0..4` 2/1/1/1/2) and every one `pass`.
+It is also why `--artifact` exists rather than a recursive scan: the scheduled directory still holds
+the *nightly's* verdict, and pointing the gate at some other directory's green is a deliberate act.
+This is deliberately **not** wired into `npm test`: the fast gate would then require an 88-minute browser
+run to exist, which breaks every fresh clone and every offline box. `test/unit/release_gate.test.js`
+pins the link instead (`release:check` → the script, the README's mention of it) and proves every one
+of the eleven markers `R0`…`R10` fires on a synthetic artifact **and** that a fresh, complete, green
+one passes — so the check cannot be decorative in either direction.
+
 Two harness behaviours are worth knowing when reading a run's output:
 
 * `bootPage` tolerates ONE class of page error — a network failure of the demo **host's** own
@@ -141,10 +184,10 @@ FEEDBACK_SHOTS=1  npx mocha test/browser_e2e/feedback_visual_capture.spec.js
 Some of these are **probes rather than gates**: they measure something and print it, so they
 self-skip unless their flag is set (`ENCODING_SHOTS`, `RECOVERY_DEPTH_SHOTS`,
 `REFUSAL_COPY_SHOTS`, `HELP_SHOTS`, `PANEL_MEASURE`) and never fail a normal run. Their
-outputs are committed under `docs/ux-gaps-20260911/`.
+outputs are committed under `vendor/docs/ux-gaps-20260911/`.
 
 Their committed evidence and the deterministic checks over it live under
-`docs/selection-model-ia-20260910/` and `docs/feedback-lifecycle-a11y-20260910/`
+`vendor/docs/selection-model-ia-20260910/` and `vendor/docs/feedback-lifecycle-a11y-20260910/`
 (`scripts/selection_visual_diff.js` re-measures the selection frames; the collage
 composers refuse to write a collage whose cells differ in size or scale).
 
@@ -157,10 +200,10 @@ page so it can be looked at and gated. It self-skips without its flag, like the 
 PRINT_AUDIT=1 npx mocha test/browser_e2e/print_output_audit.spec.js --timeout 1800000
 ```
 
-Its evidence is committed under `docs/print-output-audit-20260911/` (page rasters,
+Its evidence is committed under `vendor/docs/print-output-audit-20260911/` (page rasters,
 `measurements.json`, the visual-gate briefs and verdicts); the audit's findings are in
-`docs/print-output-audit-20260911/audit_report.md`. The sheet's missing text layer, which that
-audit handed on, is fixed and re-measured in `docs/print-sheet-text-layer-20260911/` (its
+`vendor/docs/print-output-audit-20260911/audit_report.md`. The sheet's missing text layer, which that
+audit handed on, is fixed and re-measured in `vendor/docs/print-sheet-text-layer-20260911/` (its
 post-fix artifacts are committed alongside, and the suite's last case now REQUIRES the text layer
 instead of only recording it).
 
@@ -169,7 +212,7 @@ the feature once sat inert for its whole life because its only test copied the a
 exercising the wiring, so the browser case asserts the effect on the real sheet — a section scaled down,
 its drawn box inside its container, and no `ResizeObserver loop` page error. Its before/after evidence
 (page rasters, print measurements, the visual-gate brief and verdicts) is committed under
-`docs/responsive-scaling-wiring-20260913/`.
+`vendor/docs/responsive-scaling-wiring-20260913/`.
 
 A second, self-skipping probe measures the one thing the audit cannot — whether a chain with every
 filter slider at its DEFAULT value is really neutral, and whether a setting the user makes still
@@ -188,7 +231,12 @@ PRINT_FILTER_PROBE=1 npx mocha test/browser_e2e/print_filter_identity_probe.spec
    alignment guides, drops always complete (clamped to the sheet), and the
    layout auto-saves ~1s after the last drop ("Layout saved" toast). Arrow
    keys nudge the selected section (1px; `Shift` = one 16px step) and the
-   properties panel shows numeric Position X/Y inputs. **What is selected is one thing**: picking a section on the sheet, picking it from the layer panel, or picking a shape all move the same selection, so the outline, the layer row and the properties panel cannot disagree — and clearing clears all three. See `docs/selection-model-ia-20260910/` for this track's visual-gate record and `docs/drag-ux-20260909/` for the drag engine's.
+   properties panel shows numeric Position X/Y inputs. **What is selected is one thing**: picking a section on the sheet, picking it from the layer panel, or picking a shape all move the same selection, so the outline, the layer row and the properties panel cannot disagree — and clearing clears all three. See `vendor/docs/selection-model-ia-20260910/` for this track's visual-gate record and `vendor/docs/drag-ux-20260909/` for the drag engine's.
+   Since 2.0.1 the move affordance is **shown, not guessed**: hovering a section
+   on the active layer puts a nine-dot grip at its centre, and the section drags
+   from there. It replaces a green `drop-shadow` that washed the whole section
+   when you hovered it (`vendor/docs/sheet-affordances-20260914/`). Dragging the section
+   body itself still works exactly as before.
 2. **Resizable Sections**: Adjust section width and height to fit your custom layout.
 3. **Properties Panel**: A centralized panel to manage the active section's font size, compact mode, and border style in real-time.
 4. **Pixel-based Font Scaling**: Granular control over section font sizes (8px to 30px) with proportional scaling for headers and icons.
@@ -230,6 +278,21 @@ PRINT_FILTER_PROBE=1 npx mocha test/browser_e2e/print_filter_identity_probe.spec
     taller or wider than its box used to have that overflow silently clipped; the content is now scaled
     down to fit the box instead, on screen and in the printout, and it re-fits when you resize the
     section or change what is inside it.
+21. **AI Arrange — bring your own key** (since 2.1.0). In the layout tray, **AI Settings** stores a
+    provider (OpenAI or Anthropic), a model id and **your own API key, on this device only**;
+    **AI Arrange** then takes one line of instruction ("move the combat box down by itself, hide the
+    utility column") and proposes a layout. **The AI proposes, the code disposes**: the model is only
+    allowed to answer with a small JSON patch — move a section, resize its width, change stacking
+    order, or hide a section from the printout — over sections the sheet actually reported. Anything
+    else is refused and **nothing changes at all**: no layout write, no save, no undo entry. A patch
+    that passes is shown first as a **dashed gold outline over where the section would land** — the
+    sheet itself is untouched while you look — with an **Apply** that behaves like any other edit, so
+    **Ctrl+Z restores the pre-AI arrangement byte for byte**. The row stays visibly **disabled until
+    you store a key**, and no network call happens before you do. Nothing reaches our servers,
+    because there are none: the request goes from the extension on your machine straight to the
+    provider you picked, with your key. The only things that leave are the section headings,
+    positions and sizes — and on a live sheet a heading can carry a monster's or an NPC's name, so
+    "no text ever leaves" would be a lie; see `PRIVACY_POLICY.md` §2.
 
 ### The tool's own chrome (since 1.8.0, ornamented in 1.11.0)
 
@@ -329,7 +392,7 @@ arrow-key navigation), assets show curated names under family-group headers
 with live search, and hovering a style or asset tile **tries it live on the
 real section/shape** (dashed-gold outline) with an exact restore when you
 leave — no more blind commits. Add mode shows an enlarged in-modal preview
-instead. See `docs/border-shape-picker-ux-20260909/` for the per-phase
+instead. See `vendor/docs/border-shape-picker-ux-20260909/` for the per-phase
 visual-gate record.
 
 ### Custom upload & templates (since 1.9.2)
@@ -340,7 +403,7 @@ open with the new shape preselected — **Add Shape / Switch Asset** places
 it, **Cancel** is save-to-library only. The **Templates** catalog is now a
 single, keyboard-safe modal (Esc/✕/backdrop, focusable cards, in-modal
 detail and an apply-confirm), and the Basic + Archer template cards show
-real captured thumbnails. See `docs/custom-upload-templates-ux-20260909/`
+real captured thumbnails. See `vendor/docs/custom-upload-templates-ux-20260909/`
 for the per-phase visual-gate record.
 
 ### Shape layers (since 1.10.0)
@@ -354,11 +417,11 @@ drag while their layer is unlocked. Chips show curated names, rows show live
 counts, empty layers say "Empty — drag a shape here", and **Ctrl/Shift-click**
 multi-selects shapes for batch **Split each into its own layer / Move
 selected / Delete selected** (atomic with rollback). See
-`docs/shape-layer-ps-ux-20260909/` for the per-phase visual-gate record.
+`vendor/docs/shape-layer-ps-ux-20260909/` for the per-phase visual-gate record.
 
 ### Trust & editor fixes (since 1.10.1)
 
-A full-surface UX audit (35 findings, `conductor/archive/ui_ux_review_20260910/`)
+A full-surface UX audit (35 findings, `vendor/conductor/archive/ui_ux_review_20260910/`)
 produced this patch set, scoped against the *"click once, then print"*
 contract:
 
@@ -395,7 +458,7 @@ boot sequence and the `window.*` test surface.
 Design system (v1.8.0 "3.5 Codex on the Workbench"): `js/ui_theme.js`
 injects the leather-and-bone token set (leather-black grounds, bone text,
 antique gold as light, oxblood/ember semantics — see
-`docs/dnd35-nostalgia-20260908/` for the art-direction contract) and the
+`vendor/docs/dnd35-nostalgia-20260908/` for the art-direction contract) and the
 chrome component skin; `js/icons.js` provides the 16px SVG line-icon set
 used by the panel,
 in-sheet action bars and the layer manager (semantic `data-state`).
@@ -428,7 +491,7 @@ in-sheet action bars and the layer manager (semantic `data-state`).
   live 16px grid snap, gold alignment guides, debounced auto-save).
 - `js/main.js` — orchestrator: init guard, boot sequence, resize/scroll interception, remaining interactive glue, `window.*` export table.
 
-Encapsulation history is tracked in `conductor/tracks/encapsulation_functionality_20260907/`.
+Encapsulation history is tracked in `vendor/conductor/tracks/encapsulation_functionality_20260907/`.
 
 ## Instructions for use
 
@@ -444,7 +507,7 @@ Encapsulation history is tracked in `conductor/tracks/encapsulation_functionalit
   - **Margins: you do not need to set these.** The extension sets its own margins in
     its print stylesheet, which overrides the print dialog's margin setting — so changing
     it has no effect. Measured, with the method and its control, in
-    `docs/first-run-and-panel-20260911/phase2_print_settings.md`.
+    `vendor/docs/first-run-and-panel-20260911/phase2_print_settings.md`.
 5. Review the print preview.
 6. Print!
 

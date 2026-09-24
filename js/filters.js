@@ -58,7 +58,7 @@ function applyGlobalFilters(filters) {
   // is NOT an identity — it is what makes the ornaments grey on purpose. Treating "defaults" as
   // neutral would silently un-grey them (measured: 5,458 -> 66,740 saturated pixels on page 1
   // alone), which is a behaviour change nobody asked for. Evidence and both measurements:
-  // docs/print-sheet-text-layer-20260911/.
+  // vendor/docs/print-sheet-text-layer-20260911/.
   const hueIsIdentity = isIdentityHue(filterNumber(hue));
   const decorationIsIdentity = isIdentityDecoration({
     contrast: filterNumber(contrast),
@@ -182,6 +182,15 @@ function applyGlobalFilters(filters) {
       /* Ensure the control panel is NEVER affected */
       #print-enhance-controls,
       #print-enhance-controls * {
+          filter: none !important;
+      }
+
+      /* …and the centred drag handle (ISSUE_drag_and_drop.md): it is chrome
+         painted over the sheet, not sheet content, so a hue-rotate on the
+         section must not travel the 300px up into it. It shares the exclusion
+         .be-section-actions already gets for the same reason. */
+      .be-drag-handle,
+      .be-drag-handle * {
           filter: none !important;
       }
   `;

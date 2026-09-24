@@ -4,7 +4,7 @@
  *
  * Boots the unpacked MV3 extension on the demo sheet at 1440px, captures the
  * named frames of visual_gate_protocol.md §1 into
- * docs/ornament-symmetry-20260910/shots-phaseN/, and MEASURES the claims the
+ * vendor/docs/ornament-symmetry-20260910/shots-phaseN/, and MEASURES the claims the
  * spec makes numerically (AC-1 rule stack, AC-2 corner construction, AC-3F
  * paint order / clipping / hover / print, AC-4 tiers, AC-5 wrap immunity). The
  * measurement is why this is also an assertion suite: a claim only a human
@@ -36,7 +36,7 @@ const { captureHarness } = require("./_capture.js");
 const cap = captureHarness({
   flag: 'ORNAMENT_SHOTS',
   dirVar: 'ORNAMENT_SHOTS_DIR',
-  defaultDir: 'docs/ornament-symmetry-20260910',
+  defaultDir: 'vendor/docs/ornament-symmetry-20260910',
   phaseVar: 'ORNAMENT_PHASE',
   defaultPhase: "",
 });
@@ -87,6 +87,11 @@ const ORNAMENT_SURFACES_JS = {
   plain: [
     ".be-feedback",
     ".be-section-actions",
+    // the centred drag handle is in-sheet chrome (ISSUE_drag_and_drop.md) and is
+    // classified here exactly as the action bar beside it is; the mirror drifts if
+    // js/ui_theme.js's ORNAMENT_SURFACES.plain changes without this list (see the
+    // note on this object).
+    ".be-drag-handle",
     ".be-more-options-button",
     ".be-layer-item-card",
     ".be-modal-tags",
@@ -637,7 +642,7 @@ describe("ornament + symmetry visual captures", function () {
           };
           const groups = [
             ["in-sheet section actions", "#print-layout-wrapper .be-section-actions button"],
-            ["in-sheet more-options", ".be-more-options-button"],
+            ["in-sheet more-options", ".be-more-options-button"],            ["in-sheet drag handle", ".be-drag-handle"],
             ["in-sheet section wrappers", ".print-section-container"],
             ["modal tag pills", ".be-modal-tags button"],
             ["modal tabs", ".be-modal-tabs button"],

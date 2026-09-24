@@ -5,6 +5,246 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **On a short section the action bar no longer covers the centred grip — the bar yields.**
+  `section-extra-tidbits-wrapper` (151×62) was the 2.0.1 census failure recorded under Known issues
+  below: the bar carries an inline `z-index: 1000000` (`js/main.js:2512`, via `window.Z.ACTIONS_BAR`)
+  against the grip's 700002, so on a section short enough for the bar's band to reach the vertical
+  centre the revealed buttons sat ON the drag area and a press there landed on
+  `be-select-section-button` instead of the grip. `js/print_styles.js` now drops the bar to
+  `700001` on exactly the arms that reveal the grip (`.be-active-layer` + `:hover` /
+  `:focus-within` on the wrapper, `!important` because an inline level outranks a non-important
+  stylesheet rule), so inside the hovered wrapper's own stacking context the ladder reads
+  hover-raise 700000 < yielded bar 700001 < grip 700002: the grip wins its own pixel, the bar stays
+  fully revealed and usable, and with the grip off screen nothing has moved at all. Two
+  alternatives were implemented and MEASURED on the live sheet before this one was kept — hoisting
+  the grip over the bar also reaches 22/22 but covers 60% of the Select button including its own
+  centre, and nudging the grip clear of the bar puts it 10px off the literal centre the grip was
+  promised at. The census assertion no longer allows any exception (it asserts
+  `grabbed === probeable`, and `KNOWN_BAR_OVERLAP_EXCEPTIONS` is deleted), and its follow-up block
+  checks what the yield must NOT cost: the bar still revealed, `barZ < gripZ`, the Select button
+  still reachable at a point of its own box. `test/unit/hover_refactor.test.js` pins the ladder
+  (falsified against the pre-fix pair) and adds a LOCKSTEP case that parses the grip reveal's
+  selector arms out of `js/dnd.js` and the yield's out of `js/print_styles.js` and requires the two
+  sets to be EQUAL — the one check that keeps "the grip is shown" and "the bar has yielded" from
+  ever becoming two definitions of one fact. Measured: census 21/22 → **22/22**; the three
+  Option-3 browser suites (`affordance_drag_hover_shadows`, `lock_handle_visibility`,
+  `drag_glow_layers`) **19 passing / 0 failing**. Reported and resolved in
+  `temp/archived/ISSUE_grip_covered_by_actions_bar_on_small_sections_20260914.md` (option 3 chosen
+  by the operator; Muse consulted on the loop, all five of his suggestions dispositioned there).
+- **The grip no longer sits on top of a short section's action-bar button.** The residual the entry
+  above left behind — the yield fixed the stacking and nothing else could — was pure geometry: on
+  `section-extra-tidbits-wrapper` (151×62) the grip's 34×26 plate is centred at (75.8, 31) and the
+  🎯 Select button's 39×32 box at (74.5, 24), so the two centres are 1.3px apart across and 7px down
+  and the boxes overlap over 34×22 = 60% of the button, INCLUDING its centre. Whoever is stacked on
+  top takes the other one's centre pixel, which is why hoisting the grip and yielding the bar produced
+  the same residual. The fix shrinks the grip's plate to the box its nine dots actually paint
+  (18×18 — a 12px `gripVertical` glyph plus a 3px ring, so the pointer never reaches further than the
+  user can see) and steps it off any control centre it would swallow. Both come from a MEASUREMENT,
+  not a constant: `gripBandFor` in `js/dnd.js` is handed the wrapper's box and the boxes of the
+  controls inside it (the action bar's buttons, the rotation handle, the resize handle — exactly the
+  nodes `isInteractiveTarget` refuses) and scores its candidates (1) no control loses its centre,
+  (2) the smallest step from the wrapper's middle, (3) the least box area covered; on the measured
+  section that pays **4px of shift, not 22**, and the plate lands at (66.75, 26) 18×18 — the button's
+  centre comes back to the button and 20% of its bottom edge stays the grip's.
+  `measureGripBands` runs it per wrapper and writes the answer as three custom properties on the
+  handle, with the shipped 34×26/zero-shift as the stylesheet's FALLBACKS, so a wrapper that never
+  collides is not touched at all: on the live sheet **1 of 22 sections bands** and 21 paint exactly
+  what 2.0.1 painted. The decision follows the geometry rather than a call site — a `ResizeObserver`
+  is subscribed to every box the pass reads (the layout root's own size does not change when one
+  section resizes, and an absolutely-positioned bar that wraps to a second row does not grow its
+  wrapper), including a control the cascade hides with `display:none` — a locked layer's rotate/resize
+  handle has no box to reason about but is exactly what appears over the centre when the user unlocks,
+  and starting to render is the only notification such an element can send (measured in Chromium:
+  `0x0` while hidden, then a real box on unlock). The pass is coalesced into a frame because
+  `fitContainer` writes a transform inside the boxes it watches, it is re-armed by `cleanupDrag`
+  because it refuses to run while `body.be-dragging` is up, and it RELEASES whatever a pass no longer
+  reads (`unobserve`) because an observer pins its targets for the life of the tab — otherwise every
+  section deleted from the sheet, and every button of every bar the paints rebuild, would leak.
+  The offset rides on `translate`, not `top`: with `inset:0; margin:auto`
+  both edges are pinned, so a written `top` is split with the leftover space (measured: `top:
+  calc(50% + 9px)` rendered at y 38, not 40). Options ruled out with pixels before this was written:
+  a transparent `::after` over the dots takes hits but the plate still wins `elementFromPoint`
+  THROUGH it, so it buys the button nothing; `clip-path` trims honestly but only a clipped element's
+  own border-box, i.e. it is exactly "shrink the plate" — which is what this is.
+  `test/unit/grip_geometry.test.js` (10 cases) pins the rule and the cascade, starting from a case that
+  reproduces the reported collision from the issue's own numbers so the fixture cannot rot, and
+  falsifying the 80px-height estimate with a 104px two-row bar that an 80px rule calls safe. Two of
+  them run against a fake observer that counts subscriptions — the only way to see that a deleted
+  section releases its boxes, or that a hidden control is watched without being counted — and both
+  were falsified (a short-circuited release, and moving the two watch calls below the hidden-skip)
+  before being reverted.
+  `test/browser_e2e/affordance_drag_hover_shadows.spec.js` now ASSERTS the pixel it previously
+  documented as unobtainable — `buttonOwnsItsCentre`, alongside the grip still winning its own
+  (smaller) centre and staying inside its wrapper — and the census stays at 22/22. Reported and
+  resolved in `temp/archived/ISSUE_grip_box_overlaps_actions_bar_on_short_sections_20260914.md`.
+
+- **The per-section "Auto-scale to fit" switch now takes effect the moment it is pressed, and a
+  section the FLOOR cannot fit says so on the sheet and in the panel.** `fitContainer` keys on two
+  inputs — the overflow ratio and `data-no-auto-scale` — and the wiring could only ever see the
+  first: both observers watched for SIZE (`js/main.js`), switching the feature off changes no size
+  at all, and the one call the panel made to force a re-measure, `initResponsiveScaling()`, returns
+  at its `installed` guard. So the checkbox flipped, the attribute landed, and the section kept its
+  scale until something else resized it — the control was a no-op in both directions on a static
+  sheet. Fixed with the issue's option 2 (operator choice): the existing `MutationObserver` now
+  also filters on `data-no-auto-scale` and `recheckFor` re-fits the OWNING container straight away,
+  which additionally fixes `js/layout_apply.js` writing the flag for every restored section (that
+  only ever worked because an apply happens to resize things). The observation lives in the scaling
+  feature rather than behind a `requestScalingRecheck` seam the caller has to remember, because
+  this is the code that reads the attribute.
+  The same pass now stamps **`data-scaling-clipped="true"`** when the scale it applied still leaves
+  content outside the box — i.e. when `MIN_SCALE_FLOOR = 0.60`, not the arithmetic, decided — and
+  two surfaces render that one fact: `js/print_styles.js` paints a red fade + dashed hairline at
+  the clipped edge under `@media screen` (never in print, and as a pseudo-element so no
+  children-walk or `> div` selector in the layout record can see it), and the properties panel
+  adds a note naming the cause and the two ways out (drag taller, or turn Auto-scale off). This is
+  option 1 of the floor issue — *"shrink to fit, but never below a readable size", with the clip made
+  visible rather than silent* — closing the decision `56ab1b7` had already implemented in code while
+  its issue stayed open. The note re-reads the marker on the microtask-after-the-write rather than
+  re-rendering the panel, so it cannot contradict the band and does not steal the checkbox's focus.
+  Also closed here: the two scaling cases that pinned the PRE-FLOOR scale (`0.5`, `0.25`) now mock
+  overflows whose arithmetic lands ABOVE the floor and assert `scale(0.625)` — so they still prove
+  the clamp exists rather than being moved onto it — and the browser spec's `misfit === 0`, which had
+  been red on a clean HEAD since the floor shipped, now asserts that the pixels and the sheet's own
+  `data-scaling-clipped` claim AGREE in both directions, over a non-empty set.
+  Measured: `npx mocha test/unit/responsive_scaling.test.js` went **6 passing / 3 failing → 12/0**
+  (9 cases → 12), the new `test/unit/properties_panel_scaling_note.test.js` is **4/0** (its third
+  case found a second defect on the way: the re-read is a zero timer and `clipNote` is a per-build
+  closure, so a panel rebuilt in that gap made the stale closure add its note BESIDE the fresh one —
+  two identical warnings from one checkbox press; `syncClipNote` now adopts what is actually in the
+  host, and the case is falsified by removing that step), the browser
+  `responsive_scaling.spec.js` is **3/0** (`section-Spells` the one floored-and-marked section, at
+  0.60, +260px), and `npm test` (lint + unit + integration + manifest) is **1167 passing / 0
+  failing**. The screen-only clip paint was then checked WHERE it could do damage rather than assumed
+  harmless: `PRINT_AUDIT=1 npx mocha test/browser_e2e/print_output_audit.spec.js` → **5 passing** on
+  the live pipeline — still 4 Letter pages, still a real text layer (3,341 text-showing operators /
+  11,979 characters), and none of the tool's own chrome on the paper with the forced-toast control
+  still landing on all four pages. Recorded as §9 of
+  `vendor/docs/responsive-scaling-wiring-20260913/FIX_REPORT.md`. Reported and
+  resolved in `temp/archived/ISSUE_scaling_offswitch_no_remeasure_and_stale_floor_expectations_20260914.md`
+  and `temp/archived/ISSUE_scaling_floor_spells_0443_20260913.md`.
+
+## [2.1.0] - 2026-09-20
+
+### Added
+- **Bring your own key (BYOK) — your API key stays on this device** (track
+  `byok_ai_layout_20260915`). The layout tray's settings row stores the provider (OpenAI or
+  Anthropic), the model id, and **your API key — in `chrome.storage.local`, on this device**.
+  The key is never written to a file, never included in a layout save, and never placed in a
+  message body: the content script asks the extension's own service worker to make the call and
+  the worker reads the key from storage itself (`js/ai_settings.js`, `js/background.js`). A
+  request to an origin other than the one you configured is refused by the worker before it
+  leaves (`provider_origin_lock`). The row is present and visibly disabled until you store a
+  key — its tooltip says why, and the flow re-reads the store as its own second gate, so a
+  stale button cannot dial a request; storing a key enables it on an event, no reload. Every
+  failure has its own sentence — 401, 429, provider down, offline, aborted and no-worker are
+  distinct toasts, and a unit case asserts the copy table is exhaustive over the core's error
+  classes so a new class cannot ship without one.
+- **`PRIVACY_POLICY.md` §2 is now checked against the manifest, both directions**
+  (`test/unit/privacy_policy_manifest_parity.test.js`). §2 promises "the minimum permissions
+  necessary to function" and the fifth permission (`storage`) plus the two provider origins had been
+  added without anything verifying the doc followed. The new case fails if the manifest grants what
+  the policy does not name, *and* if the policy names what the manifest no longer grants.
+
+### Internal
+- Baseline for the track (AC-7): `npm test` **1167/0 → 1448/0**, the encapsulation oracle unmoved at
+  **299/0**, lint clean, browser collection **71 spec files** (was 69) with
+  `node scripts/browser_gate.js` green.
+
+## [2.0.1] - 2026-09-14
+
+### Changed
+- **Hovering a section no longer washes it in green.** A hovered, draggable section used to carry
+  `filter: drop-shadow(0 0 15px #28a745)` twice, animated over 300ms. A `filter` on the wrapper
+  repaints the whole subtree — every border, background and piece of artwork in the section — so it
+  did not decorate the section, it washed it. The rule is deleted; the stacking raise it shared a
+  block with (`z-index: 700000`) stays, because that is the part other rules depend on and it costs
+  nothing to paint.
+- **Dragging is now done from a handle, not from anywhere.** `button.be-drag-handle` — a nine-dot
+  grip (`Icons.svg("gripVertical", 12)`, a new entry in the existing 16px icon set, filled circles so
+  a 12px render reads as dots and not rings) — sits at the **centre of each section**, is revealed
+  only on the active layer, and is the one control the drag engine accepts as a grab target
+  (`isInteractiveTarget` would otherwise have refused it as a `button`; the exemption is checked
+  first, so there is exactly one statement of which control is the handle). Invisible *and*
+  unhittable at rest — `visibility`, not `opacity`, so it cannot be tabbed to, clicked through, or
+  read out by assistive tech — hidden on locked layers, hidden while a drag is held, hidden in print,
+  and excluded from the sheet's hue-rotate filters so a recoloured section cannot carry the grip off
+  palette.
+- **`#print-enhance-controls` casts no shadow.** Four separate declarations piled blurred black onto
+  that one panel, each `!important`, so the last one in the sheet won and calming any earlier one
+  changed nothing — including an inline `boxShadow` in `js/controls.js` that outranked everything the
+  theme layer tried to do about it. All four are gone for this panel. What it keeps is not shadow:
+  a `box-shadow` with zero offset-blur is a **frame**, so the blind-tool ring, the leather border, the
+  inner hairline and the corner marks of the ornament treatment all stand. The layer manager keeps
+  its lift — it was not part of the complaint, and a fix aimed at one tray must not re-tier the pair.
+
+### Fixed
+- **Section action buttons appear on the ACTIVE layer only.** `be-section-actions` used to reveal on
+  hover for *every* section, "regardless of their status": two of the three reveal rules keyed off the
+  LOCK state (`.be-layer-locked`, and `body[class*="be-lock-"]` which is true whenever any layer is
+  locked — and this product keeps every layer but one locked), so between them they matched almost
+  everywhere. Both are deleted and `.be-active-layer` is now the single mechanism. Because that class
+  is written independently of `isLocked`, an active-and-locked layer still reveals its bar, so the
+  reachability the deleted rules were written for (a locked layer's own unlock control) is preserved.
+- **…and a hidden action bar is no longer clickable.** The bar is created with an inline
+  `pointerEvents = "all"`, which outranks a *non-important* stylesheet rule at any specificity, so the
+  rest-state `pointer-events: none` did nothing: every inactive section carried invisible 25×32px dead
+  buttons over its content, eating clicks. The rest-state rule is now `!important`.
+
+### Internal
+- **The backtick-in-a-CSS-comment trap now has a guard that covers every module, not one.** Three of
+  this project's files were simultaneously broken by the same mistake while this work was in
+  progress: a backtick inside a CSS comment inside the template literal that emits the stylesheet
+  *terminates the literal*, so the module throws a `SyntaxError` at load in the browser, with a
+  message pointing at prose. `scripts/check_theme_backticks.js` already existed for that hazard but
+  only for `js/ui_theme.js`. `test/unit/js_source_syntax.test.js` compiles every file under `js/`
+  (parse-only, so no boot code runs), asserts the four stylesheet-injecting modules it exists for are
+  actually in the walk so it cannot pass vacuously, and carries a planted copy of the defect to prove
+  it reports it.
+- **Browser coverage for the three affordances above, added after the release (no version bump — it
+  changes no product code, so it belongs to 2.0.1's behaviour rather than to a new one).**
+  `test/browser_e2e/affordance_drag_hover_shadows.spec.js` drives a real MV3 extension in Chromium at
+  the pinned `SHEET_VIEWPORT` 1920×1080 and covers everything the unit suite structurally cannot: a
+  COMPUTED `box-shadow` on the composed page rather than a grep of the emitted CSS, a revealed grip
+  probed with a real pointer at its own pixel, and the `:hover` reveal of `.be-section-actions` on the
+  active layer versus its absence on a locked one. 13 cases, all green.
+  The hue-isolation case calls the product's own seam,
+  `test/browser_e2e/_helpers/inject.js` → `setGlobalFilters`, because `window.applyGlobalFilters`
+  lives in the extension's ISOLATED world and is invisible to `page.evaluate` — MEASURED: a direct
+  call there was `undefined` and the case failed on its own vacuity guard while the product was
+  correct. The suite is runnable by name as `npm run test:e2e:affordances`, which raises the pinned
+  per-file roster in `test/unit/e2e_plumbing_guard.test.js` from 37 to 38 (the reason is recorded
+  there: 13 cases at ~32 s is a 7-minute run worth naming while iterating on the affordances, exactly
+  like `test:e2e:glow` beside it). `test/browser_e2e/spec_inventory.json` is regenerated to match —
+  69 spec files / 289 collected tests (was 68 / 276) — verified collection-only, without executing a
+  browser case, since the gate runner diffs this manifest against the live enumeration.
+- **A grip-reachability CENSUS instead of a first-candidate assertion.** The suite walks every
+  active-layer section, hides the non-test layers through the panel's own "Hide on sheet" control, and
+  counts how many revealed grips win the hit test at their own centre: **21 of 22**. The one that does
+  not is recorded rather than hidden — see Known issues.
+  Four of the 13 cases carry a conditional `this.skip()` when the live host sheet offers no reachable
+  candidate for them (no locked-and-not-active section, no second layer row to flip); that is the
+  existing practice across 24 of this suite's spec files, and it is why the pending map
+  (`spec_pending.json`) is deliberately untouched — those skips are runtime host conditions, not
+  flag-gated captures, so they never enter it.
+
+### Known issues
+- **On a section short enough for its action bar to reach the centre, the bar covers the grip —
+  filed, not fixed.** `section-extra-tidbits-wrapper` (151×62) fails the census above: the bar carries
+  an inline `z-index: 1000000` (`js/main.js:2512`, via `window.Z.ACTIONS_BAR`) and the grip 700002
+  (`js/dnd.js`), so on a small section the revealed buttons sit ON the drag area and a press there
+  lands on `be-select-section-button` instead of the grip. This is a real regression in reachability
+  introduced by the 2.0.1 grip — the grip's pixel used to be section content, which drags — so it is
+  recorded honestly rather than asserted away:
+  `temp/archived/ISSUE_grip_covered_by_actions_bar_on_small_sections_20260914.md` (three concrete fix
+  options, all re-stacking, none attempted here — **option 3 was taken after this release; see
+  [Unreleased]**). The census assertion is a **ratchet on the count**
+  (`KNOWN_BAR_OVERLAP_EXCEPTIONS = 1`) with the miss list printed, so a stacking regression that makes
+  ordinary section content beat the grip blows far past the bound and goes red.
+
+
 ## [2.0.0] - 2026-09-14
 
 ### Added
@@ -23,7 +263,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surface (`1.4.10`, 75 specs) turned into a collection-bound, cause-bound gate that refuses to
   overlap, alongside the lint, unit and print-output gates.
 - **Evidence, not opinions.** Every criterion above is gated on captured frames or measurements,
-  committed under `docs/` per track.
+  committed under `vendor/docs/` per track.
 
 ### Changed
 - **`js/main.js` is no longer the application.** Twenty-one modules now own what used to be one
@@ -73,7 +313,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overflowed**, the worst being Spells — 1,661 px of content in a 736 px box. Now **about 1,600 px of
   content that used to be cut off is scaled into view instead** (summed over those 8 sections), and the
   printed sheet carries **11,632 → 11,884 characters** of text. Still four US-Letter pages, still a
-  real text layer, page count unchanged (`docs/responsive-scaling-wiring-20260913/`, with the
+  real text layer, page count unchanged (`vendor/docs/responsive-scaling-wiring-20260913/`, with the
   before/after rasters of every page).
 - **…and it keeps working as the sheet changes.** Sections do not exist when the extension boots —
   they are built afterwards, by the layout pass — so watching only what is on the page at startup
@@ -113,7 +353,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   layout — it fits, and it is small on paper. A floor on the scale, or a per-section switch, is a
   product call that needs a legibility measurement rather than a hunch; the committed page rasters are
   the material for it. Filed as its own decision, with the measurements and the four options:
-  `temp/issues/ISSUE_scaling_floor_spells_0443_20260913.md`. See §5 of the fix report.
+  `temp/archived/ISSUE_scaling_floor_spells_0443_20260913.md` (path as filed; the decision was taken
+  in `[Unreleased]` above — options 1 + 2 together). See §5 of the fix report.
 
 ## [1.17.2] - 2026-09-12
 
@@ -178,7 +419,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 - Also fixed while verifying: running the print-audit suite *without* its flag overwrote its own
-  committed evidence (`docs/print-output-audit-20260911/measurements.json`) with `{}`, because mocha
+  committed evidence (`vendor/docs/print-output-audit-20260911/measurements.json`) with `{}`, because mocha
   still runs an `after` hook for a skipped suite. The write is guarded now, and a skipped run is
   proven to leave the file untouched.
 - The print audit's last case used to *record* the sheet's operator inventory and deliberately not
@@ -190,7 +431,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slider at its DEFAULT value is really neutral, and whether a setting the user makes still reaches
   the paper. It drives the panel's own sliders and asserts both:
   `PRINT_FILTER_PROBE=1 npx mocha test/browser_e2e/print_filter_identity_probe.spec.js`.
-- `docs/print-sheet-text-layer-20260911/FIX_REPORT.md` carries the before/after numbers, the two
+- `vendor/docs/print-sheet-text-layer-20260911/FIX_REPORT.md` carries the before/after numbers, the two
   candidate rules measured against each other, and the limits this fix states rather than hides
   (the file is *bigger* now — 5.98 MB → 8.08 MB — and a filtered sheet is still rasterised).
 - **The one item the gate track left to the operator is now assigned in writing, to the project that
@@ -204,7 +445,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports a green first run** (verified in both places: `LastTaskResult` *and* a
   `green`/`collection.status: ok`/`execution.status: pass` artifact, with a documented fallback to the
   interactive logon type if session 0 cannot launch Chromium). The annotation in
-  `conductor/archive/gate_coverage_20260912/final_report.md` §6.1 records this against the open item it
+  `vendor/conductor/archive/gate_coverage_20260912/final_report.md` §6.1 records this against the open item it
   leaves standing, and `temp/scratch/probe_handoff_claims.py` checks every request-side fact the
   handoff asserts (26 checks, all pass).
 
@@ -235,7 +476,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a control proving the measurement can see a margin at all. The earlier track's "noise floor"
   of 37,200 bytes is corrected: that was the boot notice disappearing between two renders, not PDF
   metadata noise.
-- `docs/print-output-audit-20260911/audit_report.md` carries the method, the page-by-page numbers,
+- `vendor/docs/print-output-audit-20260911/audit_report.md` carries the method, the page-by-page numbers,
   the two visual-gate verdicts and the limits this audit states rather than hides.
 
 ## [1.15.1] - 2026-09-11
@@ -291,7 +532,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   visual capture. Measuring it in a real browser through the real injection path — the ellipsis
   itself, the degree sign, the emoji, the close glyph — showed every one of them rendering
   **correctly**, so the claim is retracted and nothing was changed for it. The record is in
-  `conductor/tracks/ux_gaps_20260911/phase1_classification.md`.
+  `vendor/conductor/tracks/ux_gaps_20260911/phase1_classification.md`.
 - **The panel's layout was measured and deliberately left alone.** Print, both Save controls,
   Undo and Restore backup are already above the fold at the standard window size, and the
   occasional-use colour filters are below it. No control was moved.
@@ -321,7 +562,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   four settings stay, because the measurement showed they still change what prints (scale 18×, and
   background graphics 8×, the render-to-render noise floor). Headers and footers were kept too: their
   effect was *below* that noise floor, and a setting is only dropped on a measurement that resolves
-  it. Method, numbers and limits: `docs/first-run-and-panel-20260911/phase2_print_settings.md`.
+  it. Method, numbers and limits: `vendor/docs/first-run-and-panel-20260911/phase2_print_settings.md`.
   *Cost, measured:* one more control takes the panel to 24 controls and its content 1210 → 1246px.
 - **The funding and feedback links moved out of the panel, into the extension's own menu.** The
   panel used to carry **Feedback** (a bug-report link) and **Contribute** (a fundraising link) as two
@@ -352,7 +593,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing was dropped and nothing was retracted: every criterion was measured rather than assumed, and
 two produced *corrections* to the claims that motivated them. Each phase's GATE 3 record is beside
-its plan (`conductor/archive/first_run_and_panel_20260911/`).
+its plan (`vendor/conductor/archive/first_run_and_panel_20260911/`).
 
 | Criterion | Disposition |
 |---|---|
@@ -418,7 +659,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
   stays the job of the automatic backups behind **Restore backup...**, which are
   unchanged (and are written before every destructive action exactly as before).
 - Canvas filters (hue / contrast / saturation) are **not** part of the saved layout, so
-  they are not on the undo stack; see `docs/undo-stack-20260911/` for the measurement.
+  they are not on the undo stack; see `vendor/docs/undo-stack-20260911/` for the measurement.
 
 ## [1.14.0] - 2026-09-11
 
@@ -561,7 +802,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
 - Full suite 853 → 852 passing, 0 failing (−10 cases that existed only to drive
   the retired dialog, +9 for the audit, the annotation rule and the new guard);
   encapsulation debt oracle unchanged at 299. See
-  `docs/dead-exports-20260910/notes.md`.
+  `vendor/docs/dead-exports-20260910/notes.md`.
 
 ## [1.13.0] - 2026-09-10
 
@@ -769,7 +1010,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
   layer list you build by splitting, instead of one giant "Shapes (Default)".
   Gated on the full mocha suite (737/0), the 299-test debt oracle, touched
   Playwright e2e, and a per-phase visual-model gate (MiniMax-M3 verdicts under
-  `docs/shape-layer-ps-ux-20260909/`).
+  `vendor/docs/shape-layer-ps-ux-20260909/`).
   - **Split & move** (`js/dom/layer_manager.js`): a shape's right-click menu
     gains **Move to New Layer…** (the new layer is named after the shape) and
     **Move to Layer…** (a chooser listing every other layer). Moving reparents
@@ -795,7 +1036,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
   `custom_upload_templates_ux_20260909`) — two deferred picker-track
   follow-ups, gated on the full mocha suite (711/0), the 299-test debt
   oracle, touched Playwright e2e, and per-phase visual-model gates
-  (MiniMax-M3 verdicts under `docs/custom-upload-templates-ux-20260909/`).
+  (MiniMax-M3 verdicts under `vendor/docs/custom-upload-templates-ux-20260909/`).
   - **Custom-tab upload no longer closes the picker or drops a shape**
     (`js/shape_picker.js`): uploading saves the shape to your library and
     the picker stays open with the uploaded shape preselected — OK (Add
@@ -821,7 +1062,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
   phase gated on the full mocha suite (697/0), the 299-test debt oracle,
   touched Playwright e2e, and a per-phase visual-model gate (screenshots →
   collage design doc → MiniMax-M3 verdicts under
-  `docs/border-shape-picker-ux-20260909/`).
+  `vendor/docs/border-shape-picker-ux-20260909/`).
   - **One picker shell** (`showAssetPickerModal`, `js/shape_picker.js`): the
     separate section-border modal is gone (its 20 hard-coded styles moved to
     the single `SECTION_BORDER_STYLES` catalog in `js/asset_catalog.js`);
@@ -855,7 +1096,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
   end, with every phase gated on the full mocha suite, the 299-test debt
   oracle, touched Playwright e2e, and a per-phase visual-model gate
   (screenshots → collage design doc → MiniMax-M3 verdicts under
-  `docs/drag-ux-20260909/`).
+  `vendor/docs/drag-ux-20260909/`).
   - **Pointer drag engine** (`js/dnd.js`): native HTML5 DnD replaced by a
     pointer-events engine — mouse/touch/pen unified, ~4px movement
     threshold keeps click/text selection intact, locked layers and
@@ -888,7 +1129,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
 - **"3.5 Codex on the Workbench" visual identity** — second-generation
   chrome identity evoking D&D 3.5 nostalgia (2003–07 core-rulebook warmth)
   without cosplay. Implements the design system locked by the 3-round art
-  direction consult (`docs/dnd35-nostalgia-20260908/consult`). Visual chrome
+  direction consult (`vendor/docs/dnd35-nostalgia-20260908/consult`). Visual chrome
   only; no behavior change (AC-0), gated on the 626-test full suite +
   299-test debt oracle + 3-round Muse visual gate on live captures.
   - Design tokens: `js/ui_theme.js` now injects the leather-and-bone set —
@@ -914,7 +1155,7 @@ its plan (`conductor/archive/first_run_and_panel_20260911/`).
 ### Changed
 - **UI/UX overhaul (fantasy print-shop design system)** — implements the
   design system locked by the 6-round UI/UX consultant iteration
-  (`docs/ui-ux-review-20260908/consult`). Visual chrome only; no behavior
+  (`vendor/docs/ui-ux-review-20260908/consult`). Visual chrome only; no behavior
   change (AC-0), gated on the 626-test full suite + 299-test debt oracle.
   - Design tokens: `js/ui_theme.js` injects the charcoal/parchment/brass/
     oxblood palette as CSS custom properties + a component skin for the
