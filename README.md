@@ -3,6 +3,12 @@ https://github.com/user-attachments/assets/1d596af8-59bf-476d-b100-920194e96072
 
 # Print Enhancer for D&D Beyond
 
+
+[![CI](https://github.com/itsdarklikehell/beyond-print-enhancer/actions/workflows/ci.yml/badge.svg)](https://github.com/itsdarklikehell/beyond-print-enhancer/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/itsdarklikehell/beyond-print-enhancer)](LICENSE)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
+
+
 **Version 2.0.0** — the 1.4.x line closed. Highlights: one modular architecture instead of the `js/main.js`
 monolith, a general undo with a snapshot gate on every destructive action, real shape layers with
 per-layer print control, and a printed sheet that is real text. Full list in [CHANGELOG.md](CHANGELOG.md).
